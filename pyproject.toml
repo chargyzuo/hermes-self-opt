@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-self-opt"
+version = "0.1.0"
+description = "Agent Self-Optimization plugin for Hermes — Harvest, Mine, Gate-Lite"
+requires-python = ">=3.10"
+dependencies = []
