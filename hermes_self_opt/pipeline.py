@@ -67,6 +67,8 @@ def run_session(
 
     if not mined.get("has_content"):
         logger.info("[%s] No valuable content found", session_id)
+        log_path = write_log(result)
+        result["log_path"] = log_path
         return result
 
     # Step 3: Gate (memory)
