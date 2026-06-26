@@ -72,12 +72,12 @@ def mine(
 
     prompt = MINE_PROMPT.format(dialog=dialog)
 
-    kwargs = {}
+    llm_kwargs = {}
     if model:
-        kwargs["model"] = model
+        llm_kwargs["model"] = model
 
     try:
-        response = auxiliary_client.chat(prompt, **kwargs)
+        response = _call_llm(auxiliary_client, prompt, **llm_kwargs)
     except Exception as e:
         raise RuntimeError(f"Auxiliary LLM call failed: {e}") from e
 
@@ -86,16 +86,32 @@ def mine(
 
 
 def _get_default_auxiliary_client():
-    """获取默认 auxiliary client。"""
+    """获取默认 auxiliary LLM 调用函数。"""
     try:
-        from agent.auxiliary_client import get_auxiliary_client
-        return get_auxiliary_client(task="default")
+        from agent.auxiliary_client import call_llm
+        return call_llm
     except ImportError:
         logger.error(
-            "Cannot import get_auxiliary_client. Make sure you're running "
-            "inside Hermes' Python environment (source venv/bin/activate)"
+            "Cannot import call_llm from auxiliary_client. Make sure you're "
+            "running inside Hermes' Python environment (source venv/bin/activate)"
         )
         raise
+
+
+def _call_llm(client, prompt: str, **kwargs) -> str:
+    """调 auxiliary LLM，返回文本响应。"""
+    from agent.auxiliary_client import call_llm as _aux_call_llm
+    messages = [{"role": "user", "content": prompt}]
+    if client is _aux_call_llm:
+        response = client(task="default", messages=messages, **kwargs)
+    else:
+        response = client(messages=messages, **kwargs)
+
+    if hasattr(response, "choices"):
+        return response.choices[0].message.content or ""
+    if isinstance(response, dict):
+        return response.get("content", "")
+    return str(response)
 
 
 def _parse_response(response: str) -> Dict[str, Any]:

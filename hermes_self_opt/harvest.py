@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -23,17 +24,24 @@ logger = logging.getLogger(__name__)
 MAX_DIALOG_CHARS = 8000
 
 
-def _import_hermes_state():
-    """延迟导入 hermes_state，避免模块加载时 Hermes 环境未就绪。"""
+def _get_db() -> Any:
+    """获取 SessionDB 实例。"""
     try:
-        from hermes_state import get_session_db
-        return get_session_db
+        from hermes_state import SessionDB
     except ImportError:
         logger.error(
             "Cannot import hermes_state. Make sure you're running inside "
             "Hermes' Python environment (source venv/bin/activate)"
         )
         raise
+
+    home = Path.home() / ".hermes"
+    db_path = home / "state.db"
+    if not db_path.exists():
+        logger.error("Session DB not found at %s", db_path)
+        raise FileNotFoundError(f"Session DB not found: {db_path}")
+
+    return SessionDB(str(db_path), read_only=True)
 
 
 def list_recent_sessions(days: int = 1, limit: int = 20) -> List[Dict[str, Any]]:
@@ -46,23 +54,44 @@ def list_recent_sessions(days: int = 1, limit: int = 20) -> List[Dict[str, Any]]
     Returns:
         每个 session 包含 id, title, created_at, message_count
     """
-    get_db = _import_hermes_state()
-    db = get_db()
+    db = _get_db()
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    sessions = db.get_recent_sessions(limit=limit)
+    sessions = db.list_sessions_rich(limit=limit)
 
     result = []
     for s in sessions:
-        created = getattr(s, "created_at", None)
+        created_str = s.get("started_at", "")
+        created = _parse_time(created_str)
         if created and created < cutoff:
             continue
         result.append({
-            "session_id": s.session_id if hasattr(s, "session_id") else getattr(s, "id", ""),
-            "title": getattr(s, "title", ""),
-            "created_at": str(getattr(s, "created_at", "")),
-            "message_count": getattr(s, "message_count", 0),
+            "session_id": s.get("id", ""),
+            "title": s.get("title", s.get("id", "")[:16]),
+            "created_at": created_str,
+            "message_count": s.get("message_count", 0),
         })
     return result
+
+
+def _parse_time(time_val) -> Optional[datetime]:
+    """解析 Hermes 的时间值（可能是字符串或时间戳）。"""
+    if time_val is None:
+        return None
+    if isinstance(time_val, (int, float)):
+        return datetime.fromtimestamp(time_val, tz=timezone.utc)
+    if isinstance(time_val, str):
+        if not time_val:
+            return None
+        for fmt in [
+            "%Y-%m-%dT%H:%M:%S.%f%z",
+            "%Y-%m-%dT%H:%M:%S%z",
+            "%Y-%m-%d %H:%M:%S",
+        ]:
+            try:
+                return datetime.strptime(time_val, fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+    return None
 
 
 def get_session_messages(session_id: str) -> List[Dict[str, Any]]:
@@ -74,10 +103,9 @@ def get_session_messages(session_id: str) -> List[Dict[str, Any]]:
     Returns:
         消息列表，每条包含 role, content, timestamp
     """
-    get_db = _import_hermes_state()
-    db = get_db()
-    messages = db.get_session_messages(session_id)
-    return messages
+    db = _get_db()
+    messages = db.get_messages(session_id)
+    return messages if messages else []
 
 
 def harvest(session_id: str) -> str:
@@ -106,7 +134,7 @@ def harvest(session_id: str) -> str:
         if not content or not isinstance(content, str):
             continue
 
-        # 截取每条消息的前 500 字（对话早期内容不重要）
+        # 截取每条消息的前 500 字
         content = content[:500]
         line = f"[{role}] {content}"
 

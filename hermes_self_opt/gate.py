@@ -107,18 +107,25 @@ def gate_skill(skill_content: str, auxiliary_client=None, benchmark_path: Option
         return {"decision": "pass", "coverage_score": 3, "reason": "无 Benchmark，仅通过基本检查"}
 
     if auxiliary_client is None:
-        from agent.auxiliary_client import get_auxiliary_client
-        auxiliary_client = get_auxiliary_client(task="default")
+        from agent.auxiliary_client import call_llm
+        auxiliary_client = call_llm
 
     prompt = GATE_PROMPT.format(skill_content=skill_content, benchmark=benchmark)
     try:
-        response = auxiliary_client.chat(prompt)
+        messages = [{"role": "user", "content": prompt}]
+        response = auxiliary_client(task="default", messages=messages)
+        if hasattr(response, "choices"):
+            response_text = response.choices[0].message.content or ""
+        elif isinstance(response, dict):
+            response_text = response.get("content", "")
+        else:
+            response_text = str(response)
     except Exception as e:
         logger.warning("Gate LLM call failed: %s", e)
         return {"decision": "pass", "coverage_score": 3, "reason": f"LLM 调用失败，默认通过: {e}"}
 
     try:
-        result = json.loads(response)
+        result = json.loads(response_text)
         coverage = result.get("coverage_score", 0)
         redline = result.get("redline_pass", True)
         reason = result.get("reason", "")
