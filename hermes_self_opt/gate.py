@@ -138,7 +138,16 @@ def gate_skill(skill_content: str, auxiliary_client=None, benchmark_path: Option
         return {"decision": "pass", "coverage_score": coverage, "reason": reason}
     except (json.JSONDecodeError, KeyError) as e:
         logger.warning("Gate LLM response parse failed: %s", e)
-        return {"decision": "pass", "coverage_score": 3, "reason": f"评分解析失败，默认通过: {e}"}
+        # 尝试修复常见的 JSON 转义问题
+        import re as _re
+        fixed = _re.sub(r'\\(?!["\\/bfnrtu])', '\\\\', response_text)
+        try:
+            result = json.loads(fixed)
+            coverage = result.get("coverage_score", 3)
+            redline = result.get("redline_pass", True)
+            reason = result.get("reason", "repaired escape")
+        except (json.JSONDecodeError, KeyError):
+            return {"decision": "pass", "coverage_score": 3, "reason": f"评分解析失败，默认通过: {e}"}
 
 
 def gate_memory(memory_chunk: str) -> Dict[str, Any]:

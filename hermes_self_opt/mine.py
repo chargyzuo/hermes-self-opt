@@ -138,14 +138,22 @@ def _parse_response(response: str) -> Dict[str, Any]:
         import re
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if match:
+            raw = match.group()
+            # 修复常见的无效转义 (如 \_ 不是合法 JSON 转义)
+            fixed = re.sub(r'\\(?!["\\/bfnrtu])', '\\\\', raw)
             try:
-                result = json.loads(match.group())
+                result = json.loads(fixed)
             except json.JSONDecodeError as e:
-                raise json.JSONDecodeError(
-                    f"Cannot parse LLM response as JSON: {e}",
-                    text,
-                    e.pos,
-                )
+                # 最后手段清空非法转义
+                stripped = re.sub(r'\\(.)', r'\1', raw)
+                try:
+                    result = json.loads(stripped)
+                except json.JSONDecodeError:
+                    raise json.JSONDecodeError(
+                        f"Cannot parse LLM response as JSON: {e}",
+                        text,
+                        e.pos,
+                    )
         else:
             raise json.JSONDecodeError(
                 "No JSON found in LLM response",
