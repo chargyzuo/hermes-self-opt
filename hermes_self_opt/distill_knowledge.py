@@ -252,8 +252,16 @@ def _generate_check_source(extracted: Dict[str, Any], step_idx: int) -> Optional
         return None
 
     # Extract commands from this step
+    # Priority: backtick commands > "操作 → 结果" left side > first sentence > full text
     cmd_matches = re.findall(r"`([^`]+)`", step_text)
-    command = cmd_matches[0] if cmd_matches else step_text[:120]
+    if cmd_matches:
+        command = cmd_matches[0]
+    elif "→" in step_text:
+        command = step_text.split("→")[0].strip()[:120]
+    elif "：" in step_text:
+        command = step_text.split("：")[-1].strip()[:120]
+    else:
+        command = step_text[:120]
 
     # Build description from the step text
     desc = step_text[:200].strip()
