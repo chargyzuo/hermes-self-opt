@@ -59,14 +59,14 @@ def distill_daily(
     date_str: Optional[str] = None,
     *,
     auxiliary_client=None,
-    sync: bool = True,
+    sync: bool = False,
 ) -> Dict[str, Any]:
     """将指定日期的 Daily Memory 蒸馏为 Core Memory 条目。
 
     Args:
         date_str: 日期字符串 "YYYY-MM-DD"，默认今天
         auxiliary_client: auxiliary LLM client（可选）
-        sync: 蒸馏后是否同步回 MEMORY.md
+        sync: 是否同步回 MEMORY.md（默认不，MEMORY.md 已废弃）
 
     Returns:
         {"distilled_count": int, "daily_chars": int, "path": str, "reason": str}
