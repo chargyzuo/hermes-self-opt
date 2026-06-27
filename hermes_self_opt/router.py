@@ -16,13 +16,20 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+try:
+    import jieba
+    _JIEBA = True
+except ImportError:
+    jieba = None  # type: ignore
+    _JIEBA = False
+
 logger = logging.getLogger(__name__)
 
 ROUTER_DB = Path.home() / ".hermes" / "self-opt" / "router.db"
 SKILLS_ROOT = Path.home() / ".hermes" / "skills"
 
 # FTS5 匹配阈值——分数低于此值认为不匹配，丢给 LLM
-MIN_SCORE = 0.3
+MIN_SCORE = 0.2
 
 
 def _has_cjk(text: str) -> bool:
@@ -104,6 +111,10 @@ def query(user_input: str, top_k: int = 3) -> List[Dict[str, Any]]:
 
     terms = [t for t in lower.replace(",", " ").split() if len(t) >= 2]
     has_cjk = _has_cjk(user_input)
+    # jieba 预分词（中文）
+    jieba_tokens = []
+    if has_cjk and _JIEBA:
+        jieba_tokens = [t.lower() for t in jieba.cut(user_input) if len(t.strip()) >= 1]
     scored = []
     for row in rows:
         dl = row["desc_lower"] or ""
@@ -118,14 +129,25 @@ def query(user_input: str, top_k: int = 3) -> List[Dict[str, Any]]:
         # Exact substring boost
         if lower in dl:
             score += 0.5
-        # CJK: character-level overlap — handles Chinese where split() fails
+        # CJK: character-level overlap + jieba token matching
         if has_cjk:
+            # 字符级重叠
             cjk_query_chars = [ch for ch in lower if '\u4e00' <= ch <= '\u9fff']
-            if cjk_query_chars:
-                cjk_desc_chars = set(ch for ch in dl if '\u4e00' <= ch <= '\u9fff')
-                cjk_hits = sum(1 for ch in cjk_query_chars if ch in cjk_desc_chars)
-                score += (cjk_hits / len(cjk_query_chars)) * 0.5
-            # Reverse match: English tokens from description appearing in query
+            cjk_desc_chars = set(ch for ch in dl if '\u4e00' <= ch <= '\u9fff')
+            if cjk_query_chars and cjk_desc_chars:
+                char_hits = sum(1 for ch in cjk_query_chars if ch in cjk_desc_chars)
+                score += (char_hits / len(cjk_query_chars)) * 0.5
+            # jieba 分词加分（多字词命中）
+            if jieba_tokens:
+                jieba_hits = 0.0
+                for tok in jieba_tokens:
+                    if len(tok) >= 2 and tok in dl:
+                        jieba_hits += 1.0
+                    elif len(tok) >= 2 and tok in nl:
+                        jieba_hits += 0.5
+                if jieba_hits > 0:
+                    score += min(jieba_hits / len(jieba_tokens), 1.0) * 0.15
+            # Reverse match
             desc_tokens = [t for t in dl.split() if len(t) >= 2]
             for tok in desc_tokens:
                 if tok in lower:
