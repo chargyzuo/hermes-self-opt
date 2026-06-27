@@ -55,6 +55,14 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     mem_parser = sub.add_parser("memory", help="Show Core Memory stats")
     mem_parser.add_argument("--show", action="store_true", help="Show full Core Memory content")
 
+    # router
+    router_parser = sub.add_parser("router", help="Skill router: build/query/stats")
+    router_sub = router_parser.add_subparsers(dest="router_command")
+    router_sub.add_parser("build", help="Rebuild FTS5 skill index")
+    rq = router_sub.add_parser("query", help="Query the skill index")
+    rq.add_argument("query_text", help="Search phrase")
+    router_sub.add_parser("stats", help="Router statistics")
+
     # run
     run_parser = sub.add_parser("run", help="Run full self-opt pipeline")
     run_parser.add_argument("--session-id", help="Single session to process")
@@ -63,7 +71,7 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     run_parser.add_argument("--overwrite-skill", action="store_true", help="Overwrite existing skills")
     run_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
-    for p in [harvest_parser, mine_parser, run_parser, distill_parser, mem_parser]:
+    for p in [harvest_parser, mine_parser, run_parser, distill_parser, mem_parser, router_parser]:
         p.set_defaults(func=cmd_self_opt)
     gate_parser.set_defaults(func=cmd_self_opt)
 
@@ -88,6 +96,8 @@ def handle_self_opt(args) -> int:
         return _handle_distill(args)
     elif command == "memory":
         return _handle_memory(args)
+    elif command == "router":
+        return _handle_router(args)
     else:
         print(f"Unknown command: {command}")
         return 1
@@ -201,6 +211,35 @@ def _handle_memory(args) -> int:
         if args.show:
             print(f"\n{load_all()}")
         return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_router(args) -> int:
+    from hermes_self_opt.router import build_index, query, stats
+    sub = args.router_command
+    try:
+        if sub == "build":
+            r = build_index()
+            print(f"✅ 索引完成: {r['indexed']} 个 skill, {r['duration_ms']}ms")
+            return 0
+        elif sub == "query":
+            results = query(args.query_text)
+            if results:
+                for r in results:
+                    print(f"  {r['name']} (score={r['score']}) — {r['description'][:80]}")
+            else:
+                print("无匹配结果")
+            return 0
+        elif sub == "stats":
+            s = stats()
+            print(f"已索引: {s['indexed_skills']} 个 skill")
+            print(f"匹配事件: {s['total_events']} 次")
+            return 0
+        else:
+            print("Usage: hermes self-opt router <build|query|stats>")
+            return 1
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
