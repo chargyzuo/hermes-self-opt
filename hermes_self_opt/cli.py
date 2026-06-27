@@ -70,6 +70,34 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     rb = router_sub.add_parser("rollback", help="Rollback skill to last backup")
     rb.add_argument("skill_name", help="Skill name to rollback")
 
+    # ── Phase 2: Knowledge pipeline ──
+
+    # extract
+    extract_parser = sub.add_parser("extract", help="Phase 2: extract normal/ MD → structured data")
+    extract_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    extract_parser.add_argument("--file", help="Extract a single MD file instead of all")
+
+    # distill-knowledge
+    dk_parser = sub.add_parser("distill-knowledge", help="Phase 2: dedup + generate YAML → staging/")
+    dk_parser.add_argument("--dry-run", action="store_true", help="Simulate, don't write files")
+
+    # gate-full
+    gf_parser = sub.add_parser("gate-full", help="Phase 2: four-rigid checks on staging/")
+    gf_parser.add_argument("--verbose", action="store_true", help="Print per-file results")
+
+    # review (P0)
+    rv_parser = sub.add_parser("review", help="Phase 2: review staging changes before commit")
+    rv_parser.add_argument("--yes", "-y", action="store_true", help="Auto-approve (skip prompt)")
+
+    # commit
+    cm_parser = sub.add_parser("commit", help="Phase 2: commit passed YAML from staging → core")
+    cm_parser.add_argument("--dry-run", action="store_true", help="Simulate, don't move files")
+    cm_parser.add_argument("--skip-gate", action="store_true", help="Skip Gate-Full, commit directly")
+    cm_parser.add_argument("--skip-review", action="store_true", help="Skip review requirement")
+
+    # knowledge stats
+    ks_parser = sub.add_parser("knowledge", help="Phase 2: knowledge base statistics")
+
     # run
     run_parser = sub.add_parser("run", help="Run full self-opt pipeline")
     run_parser.add_argument("--session-id", help="Single session to process")
@@ -78,7 +106,8 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     run_parser.add_argument("--overwrite-skill", action="store_true", help="Overwrite existing skills")
     run_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
-    for p in [harvest_parser, mine_parser, run_parser, distill_parser, mem_parser, router_parser]:
+    for p in [harvest_parser, mine_parser, run_parser, distill_parser, mem_parser,
+              router_parser, extract_parser, dk_parser, gf_parser, rv_parser, cm_parser, ks_parser]:
         p.set_defaults(func=cmd_self_opt)
     gate_parser.set_defaults(func=cmd_self_opt)
 
@@ -105,6 +134,18 @@ def handle_self_opt(args) -> int:
         return _handle_memory(args)
     elif command == "router":
         return _handle_router(args)
+    elif command == "extract":
+        return _handle_extract(args)
+    elif command == "distill-knowledge":
+        return _handle_distill_knowledge(args)
+    elif command == "gate-full":
+        return _handle_gate_full(args)
+    elif command == "review":
+        return _handle_review(args)
+    elif command == "commit":
+        return _handle_commit(args)
+    elif command == "knowledge":
+        return _handle_knowledge_stats(args)
     else:
         print(f"Unknown command: {command}")
         return 1
@@ -247,6 +288,174 @@ def _handle_router(args) -> int:
         else:
             print("Usage: hermes self-opt router <build|query|stats>")
             return 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+# ── Phase 2 handlers ─────────────────────────────────────────────
+
+
+def _handle_extract(args) -> int:
+    from pathlib import Path
+    from hermes_self_opt.extractor import extract_one, extract_all
+    try:
+        if args.file:
+            result = extract_one(Path(args.file))
+            results = [result]
+        else:
+            results = extract_all()
+
+        if args.json:
+            import json
+            print(json.dumps(results, indent=2, ensure_ascii=False))
+        else:
+            print(f"Extracted {len(results)} files:")
+            for r in results:
+                sid = r.get("id", "?")
+                tags = r.get("tags", [])
+                cmds = len(r.get("commands", []))
+                device = r.get("device_type", "?")
+                print(f"  {sid}  [{device}]  tags={len(tags)}  cmds={cmds}")
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_distill_knowledge(args) -> int:
+    from hermes_self_opt.extractor import extract_all
+    from hermes_self_opt.distill_knowledge import distill_and_generate
+    try:
+        print("Extracting normal/ MD files...")
+        extracted = extract_all()
+        if not extracted:
+            print("No files extracted from normal/")
+            return 1
+
+        print(f"Distilling {len(extracted)} files → staging/ ...")
+        result = distill_and_generate(extracted, dry_run=args.dry_run)
+
+        print(f"\nResults:")
+        print(f"  Documents processed:  {result['total_files']}")
+        print(f"  New check_sources:    {result['new_check_sources']}")
+        print(f"  New decision_sources: {result['new_decision_sources']}")
+        print(f"  New full docs:        {result['new_full_docs']}")
+        print(f"  Duplicates skipped:   {result['duplicates_skipped']}")
+        if not args.dry_run:
+            print(f"  Files written to:     {result['staging_dir']}")
+        else:
+            print(f"  (dry-run, no files written)")
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_gate_full(args) -> int:
+    from hermes_self_opt.gate_full import run_gate_checks
+    try:
+        result = run_gate_checks(verbose=args.verbose)
+        print(f"Gate-Full: {result['passed']} passed, {result['failed']} failed")
+        if result["errors"]:
+            print(f"\nErrors ({len(result['errors'])}):")
+            for e in result["errors"]:
+                print(f"  [{e['check']}] {e['file']}: {e['message']}")
+        if result["all_passed"]:
+            print("\n✅ All checks passed — ready to commit")
+        else:
+            print("\n❌ Gate-Full failed — fix errors before commit")
+        return 0 if result["all_passed"] else 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_review(args) -> int:
+    from hermes_self_opt.reviewer import scan_staging, review_staging
+    try:
+        scan_result = scan_staging()
+        approved, _ = review_staging(scan_result=scan_result, auto_approve=args.yes)
+
+        if not approved:
+            return 1
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_commit(args) -> int:
+    from hermes_self_opt.gate_full import run_gate_checks
+    from hermes_self_opt.committer import commit_to_core
+    from hermes_self_opt.reviewer import load_review_state, staging_changed_since_review
+    try:
+        # ── Review gate ──
+        if not args.skip_review:
+            state = load_review_state()
+            if not state:
+                print("❌ Not reviewed. Run 'hermes self-opt review' first.")
+                print("   Or use --skip-review to bypass.")
+                return 1
+            if not state.get("approved"):
+                print("❌ Review was rejected. Run 'hermes self-opt review' to re-review.")
+                return 1
+            if staging_changed_since_review(state):
+                print("❌ Staging changed since last review. Run 'hermes self-opt review' to re-review.")
+                return 1
+            reviewed_at = state.get("reviewed_at", "unknown")
+            print(f"✅ Review approved ({reviewed_at})")
+        else:
+            print("⚠️  Skipping review gate (--skip-review)")
+
+        # ── Gate-Full ──
+        gate_result = None
+        if not args.skip_gate:
+            print("Running Gate-Full checks...")
+            gate_result = run_gate_checks()
+            if not gate_result["all_passed"]:
+                print(f"❌ Gate-Full: {gate_result['passed']} passed, {gate_result['failed']} failed")
+                for e in gate_result["errors"]:
+                    print(f"  [{e['check']}] {e['file']}: {e['message']}")
+                print("\nFix errors or use --skip-gate to commit anyway.")
+                return 1
+            print(f"✅ Gate-Full: {gate_result['passed']} passed")
+        else:
+            print("⚠️  Skipping Gate-Full (--skip-gate)")
+
+        result = commit_to_core(gate_result=gate_result, dry_run=args.dry_run)
+
+        if result.get("error"):
+            print(f"Error: {result['error']}")
+            return 1
+
+        print(f"\nCommitted: {result['committed']} files")
+        print(f"  check_sources:    {result['check_sources']}")
+        print(f"  decision_sources: {result['decision_sources']}")
+        print(f"  full docs:        {result['full_docs']}")
+        print(f"  dry-run:          {result['dry_run']}")
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_knowledge_stats(args) -> int:
+    from hermes_self_opt.committer import stats
+    try:
+        s = stats()
+        print("Knowledge Base Statistics:")
+        print(f"  normal/ MD files:       {s['normal_md_files']}")
+        print(f"  core/ check_sources:    {s['core_check_sources']}")
+        print(f"  core/ decision_sources: {s['core_decision_sources']}")
+        print(f"  core/ full docs:        {s['core_full_docs']}")
+        print(f"  staging/ YAML files:    {s['staging_files']}")
+        print(f"  index entries:          {s['index_entries']}")
+        print(f"  index tags:             {s['index_tags']}")
+        total = s['core_check_sources'] + s['core_decision_sources'] + s['core_full_docs']
+        print(f"  ─────────────────────────────")
+        print(f"  core/ total:            {total}")
+        return 0
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
