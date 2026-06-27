@@ -149,9 +149,36 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     cry_parser.add_argument("--detect-only", action="store_true", help="Only detect patterns, don't generate")
     cry_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
+    # feedback (P4: user feedback loop)
+    fb_parser = sub.add_parser("feedback", help="Phase 4: capture/list/process/reject user corrections")
+    fb_sub = fb_parser.add_subparsers(dest="feedback_command")
+
+    fb_capture = fb_sub.add_parser("capture", help="Capture a user correction")
+    fb_capture.add_argument("--target", required=True, help="Target skill name or knowledge ID")
+    fb_capture.add_argument("--correction", required=True, help="Correction text")
+    fb_capture.add_argument("--type", default="skill", choices=["skill", "knowledge"],
+                            help="Target type (default: skill)")
+    fb_capture.add_argument("--signal", default="explicit", choices=["explicit", "implicit"],
+                            help="Signal type (default: explicit)")
+    fb_capture.add_argument("--session-id", help="Associated session ID")
+
+    fb_list = fb_sub.add_parser("list", help="List corrections")
+    fb_list.add_argument("--status", default="pending", choices=["pending", "processed", "rejected", "all"],
+                         help="Filter by status (default: pending)")
+    fb_list.add_argument("--json", action="store_true", help="Output as JSON")
+
+    fb_process = fb_sub.add_parser("process", help="Process pending corrections")
+    fb_process.add_argument("--id", dest="correction_id", help="Process a single correction by ID")
+    fb_process.add_argument("--all", action="store_true", help="Process all pending corrections")
+    fb_process.add_argument("--dry-run", action="store_true", help="Simulate, don't write")
+
+    fb_reject = fb_sub.add_parser("reject", help="Reject a pending correction")
+    fb_reject.add_argument("--id", required=True, dest="correction_id", help="Correction ID to reject")
+    fb_reject.add_argument("--reason", default="", help="Rejection reason")
+
     for p in [harvest_parser, mine_parser, run_parser, distill_parser, mem_parser,
               router_parser, extract_parser, dk_parser, gf_parser, rv_parser, cm_parser, ks_parser, es_parser, jd_parser,
-              rp_parser, opt_parser, cry_parser]:
+              rp_parser, opt_parser, cry_parser, fb_parser]:
         p.set_defaults(func=cmd_self_opt)
     gate_parser.set_defaults(func=cmd_self_opt)
 
@@ -200,6 +227,8 @@ def handle_self_opt(args) -> int:
         return _handle_optimize(args)
     elif command == "crystallize":
         return _handle_crystallize(args)
+    elif command == "feedback":
+        return _handle_feedback(args)
     else:
         print(f"Unknown command: {command}")
         return 1
@@ -817,6 +846,101 @@ def _handle_crystallize(args) -> int:
                 print(f"\nTotal: {tp}/{tg} passed, {tw} written")
 
         return 0
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_feedback(args) -> int:
+    """Phase 4: 用户反馈回流 — capture/list/process/reject."""
+    from hermes_self_opt.feedback import (
+        capture_feedback, list_pending, process_feedback,
+        process_all_feedback, reject_feedback,
+    )
+
+    sub = args.feedback_command
+    if not sub:
+        print("Usage: hermes self-opt feedback <capture|list|process|reject> [options]")
+        return 1
+
+    try:
+        if sub == "capture":
+            record = capture_feedback(
+                target=args.target,
+                correction=args.correction,
+                target_type=args.type,
+                signal_type=args.signal,
+                session_id=getattr(args, "session_id", None),
+            )
+            print(f"✅ Captured: {record['id']}")
+            print(f"   target: {record['target_type']}={record['target']}")
+            print(f"   signal: {record['signal_type']}")
+            print(f"   file:   {record['id']}.json (pending/)")
+            return 0
+
+        elif sub == "list":
+            records = list_pending(args.status)
+            if args.json:
+                print(json.dumps(records, indent=2, ensure_ascii=False))
+                return 0
+
+            status_label = args.status.capitalize()
+            print(f"Corrections ({status_label}): {len(records)}")
+            if not records:
+                return 0
+            for r in records:
+                sid = r.get("session_id", "-")
+                ts = r.get("timestamp", "")[:16]
+                print(f"  [{r['id']}] {r['target_type']}={r['target']} ({r['signal_type']})")
+                print(f"     {ts}  session={sid}  status={r['status']}")
+                print(f"     \"{r['correction'][:80]}\"")
+            return 0
+
+        elif sub == "process":
+            if args.all:
+                print(f"Processing all pending corrections...")
+                summary = process_all_feedback(dry_run=args.dry_run)
+                print(f"Total: {summary['total']}, processed: {summary['processed']}, rejected: {summary['rejected']}")
+                for r in summary["results"]:
+                    cid = r["correction_id"]
+                    st = r["status"]
+                    err = r.get("error", "")
+                    mark = "✅" if st in ("processed", "dry_run") else "❌"
+                    print(f"  {mark} {cid}: {st}" + (f" — {err}" if err else ""))
+                return 0
+
+            elif args.correction_id:
+                result = process_feedback(args.correction_id, dry_run=args.dry_run)
+                if result.get("error"):
+                    print(f"❌ {result['correction_id']}: {result['error']}")
+                    return 1
+                print(f"✅ {result['correction_id']}: {result['status']}")
+                if result.get("target_file"):
+                    print(f"   target: {result['target_file']}")
+                if result.get("gate_result"):
+                    g = result["gate_result"]
+                    print(f"   gate:   {g.get('decision', '?')} (score={g.get('coverage_score', '?')})")
+                if result.get("applied_diff"):
+                    print(f"   diff:   {result['applied_diff']}")
+                return 0
+            else:
+                print("Specify --id <correction-id> or --all")
+                return 1
+
+        elif sub == "reject":
+            result = reject_feedback(args.correction_id, args.reason)
+            if result.get("error"):
+                print(f"❌ {result['correction_id']}: {result['error']}")
+                return 1
+            print(f"✅ Rejected: {result['correction_id']}")
+            if args.reason:
+                print(f"   reason: {args.reason}")
+            return 0
+
+        else:
+            print(f"Unknown feedback command: {sub}")
+            return 1
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
