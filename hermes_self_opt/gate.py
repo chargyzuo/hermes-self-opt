@@ -28,25 +28,35 @@ SENSITIVE_PATTERNS = [
     r"(?i)sk-[a-zA-Z0-9]{20,}",  # OpenAI API key 格式
 ]
 
-GATE_PROMPT = """你是一个 skill 质量评审员。以下是一个新生成的 skill 草稿。
+GATE_PROMPT = """你是一个网络排障 skill 质量评审员。以下是一个自动生成的 skill 草稿和 Benchmark 题库。
 
 ## Skill 草稿
 {skill_content}
 
-## Benchmark 考题
+## Benchmark 题库（每条都包含：问题 + 必要步骤 + 红线）
 {benchmark}
 
 ## 评分标准
-请从两个维度评分：
-1. 必要步骤覆盖（0-5）：skill 是否覆盖了排障必要的核心步骤。0=完全无关，5=完整覆盖。
-2. 红线检查（pass/fail）：skill 是否包含绝对不该做的错误操作。
 
-## 输出格式（JSON）
+**模式 A — 如果 Skill 与某条 Benchmark 直接相关（描述同类故障）：**
+1. 必要步骤覆盖（0-5）：skill 是否覆盖了 Benchmark 指定的必要步骤。
+   - 0-1 = 基本不相关或漏掉大部分步骤
+   - 2-3 = 覆盖了部分步骤但缺关键环节
+   - 4-5 = 完整覆盖或超额覆盖
+2. 红线检查（pass/fail）：skill 是否包含了 Benchmark 标记的红线操作？
+   - 注意：除了 Benchmark 明确列出的红线，也要警惕明显错误（如跳过必经步骤）
+
+**模式 B — 如果 Skill 与所有 Benchmark 都不直接相关：**
+1. 给出覆盖分 3（通用质量，不匹配任何已知排障场景）
+2. 红线检查：skill 是否明显错误（如跳过必经物理层检查、直接 reset 设备等）
+
+## 输出格式（严格 JSON）
 ```json
 {{
+  "matched_benchmark": "bench-001 或 null",
   "coverage_score": 0,
   "redline_pass": true,
-  "reason": "简要说明评分原因"
+  "reason": "简要说明"
 }}
 ```"""
 
@@ -60,7 +70,11 @@ def _has_sensitive_content(text: str) -> bool:
 
 
 def _load_benchmark(benchmark_path: Optional[str] = None) -> str:
-    """加载 Benchmark 题库。"""
+    """加载 Benchmark 题库，返回格式化的文本。
+
+    返回内容包含每条 Benchmark 的问题、必要步骤和红线，
+    供 LLM Judge 做两个维度的评分。
+    """
     if benchmark_path:
         path = Path(benchmark_path)
     else:
@@ -72,12 +86,26 @@ def _load_benchmark(benchmark_path: Optional[str] = None) -> str:
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, list):
-            return "\n".join(
-                f"Q{i+1}: {item.get('question', '')}"
-                for i, item in enumerate(data[:5])
-            )
-        return json.dumps(data, indent=2, ensure_ascii=False)
+        if not isinstance(data, list) or len(data) == 0:
+            return ""
+
+        parts = []
+        for item in data:
+            bid = item.get("id", "?")
+            question = item.get("question", "")
+            required = item.get("required_steps", [])
+            redlines = item.get("redlines", [])
+
+            parts.append(f"## {bid}: {question}")
+            parts.append("必要步骤:")
+            for s in required:
+                parts.append(f"  - {s}")
+            parts.append("红线 (绝对不能出现在 skill 中):")
+            for r in redlines:
+                parts.append(f"  - {r}")
+            parts.append("")
+
+        return "\n".join(parts)
     except (json.JSONDecodeError, OSError) as e:
         logger.warning("Failed to load benchmark: %s", e)
         return ""
@@ -120,6 +148,14 @@ def gate_skill(skill_content: str, auxiliary_client=None, benchmark_path: Option
             response_text = response.get("content", "")
         else:
             response_text = str(response)
+
+        if not response_text.strip():
+            # LLM 返回空，降级为基本检查
+            if len(skill_content) > 15000:
+                return {"decision": "fail", "coverage_score": 0, "reason": "skill 过长（>15KB）"}
+            if _has_sensitive_content(skill_content):
+                return {"decision": "fail", "coverage_score": 0, "reason": "包含敏感信息"}
+            return {"decision": "pass", "coverage_score": 3, "reason": "LLM 返回空，降级为基本检查"}
     except Exception as e:
         logger.warning("Gate LLM call failed: %s", e)
         return {"decision": "pass", "coverage_score": 3, "reason": f"LLM 调用失败，默认通过: {e}"}
