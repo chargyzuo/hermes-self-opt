@@ -22,8 +22,8 @@ NORMAL_DIR = Path.home() / ".hermes" / "knowledge" / "normal"
 SECTION_ALIASES: Dict[str, List[str]] = {
     "symptoms":    ["现象", "概述", "现象与背景", "问题描述", "Symptoms", "Overview"],
     "troubleshooting": ["排查路径", "排查步骤", "排查过程", "过程", "Troubleshooting", "Steps"],
-    "root_cause":  ["根因", "根本原因", "原因", "Root Cause", "Cause"],
-    "solution":    ["方案", "解决方法", "对策", "Solution", "Resolution"],
+    "root_cause":  ["原因分析", "根因", "根本原因", "原因", "Root Cause", "Cause"],
+    "solution":    ["解决方案", "方案", "解决方法", "对策", "Solution", "Resolution"],
     "actions":     ["操作", "配置命令", "执行步骤", "操作步骤", "Actions", "Commands", "操作指引"],
     "notes":       ["备注", "注意事项", "其他问题", "附注", "Notes", "Caveats"],
 }
