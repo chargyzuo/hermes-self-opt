@@ -98,6 +98,10 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     # knowledge stats
     ks_parser = sub.add_parser("knowledge", help="Phase 2: knowledge base statistics")
 
+    # export-schema
+    es_parser = sub.add_parser("export-schema", help="Phase 2: export JSON schema to core/_schema.yaml")
+    es_parser.add_argument("--dry-run", action="store_true", help="Preview only")
+
     # run
     run_parser = sub.add_parser("run", help="Run full self-opt pipeline")
     run_parser.add_argument("--session-id", help="Single session to process")
@@ -107,7 +111,7 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     run_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
     for p in [harvest_parser, mine_parser, run_parser, distill_parser, mem_parser,
-              router_parser, extract_parser, dk_parser, gf_parser, rv_parser, cm_parser, ks_parser]:
+              router_parser, extract_parser, dk_parser, gf_parser, rv_parser, cm_parser, ks_parser, es_parser]:
         p.set_defaults(func=cmd_self_opt)
     gate_parser.set_defaults(func=cmd_self_opt)
 
@@ -146,6 +150,8 @@ def handle_self_opt(args) -> int:
         return _handle_commit(args)
     elif command == "knowledge":
         return _handle_knowledge_stats(args)
+    elif command == "export-schema":
+        return _handle_export_schema(args)
     else:
         print(f"Unknown command: {command}")
         return 1
@@ -455,6 +461,22 @@ def _handle_knowledge_stats(args) -> int:
         total = s['core_check_sources'] + s['core_decision_sources'] + s['core_full_docs']
         print(f"  ─────────────────────────────")
         print(f"  core/ total:            {total}")
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_export_schema(args) -> int:
+    from hermes_self_opt.gate_full import export_schema
+    try:
+        result = export_schema(dry_run=args.dry_run)
+        path = result["path"]
+        ver = result["schema_version"]
+        if args.dry_run:
+            print(f"Schema v{ver} — {result['lines']} lines → {path} (dry-run)")
+        else:
+            print(f"✅ Schema v{ver} exported → {path}")
         return 0
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
