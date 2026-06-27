@@ -63,7 +63,7 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     run_parser.add_argument("--overwrite-skill", action="store_true", help="Overwrite existing skills")
     run_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
-    for p in [harvest_parser, mine_parser, run_parser]:
+    for p in [harvest_parser, mine_parser, run_parser, distill_parser, mem_parser]:
         p.set_defaults(func=cmd_self_opt)
     gate_parser.set_defaults(func=cmd_self_opt)
 
