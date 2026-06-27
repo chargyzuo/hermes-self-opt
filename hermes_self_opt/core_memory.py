@@ -110,3 +110,37 @@ def stats() -> Dict[str, int]:
         entries = _read_yaml(CORE_DIR / filename)
         s[category] = len(entries)
     return s
+
+
+def sync_to_memory_md() -> int:
+    """将 Core Memory 同步回 MEMORY.md，保持 agent 兼容。
+
+    过程：
+      1. 读取 Core Memory 的 YAML 文件
+      2. 渲染成跟 MEMORY.md 兼容的格式（用 § 分隔）
+      3. 写入 ~/.hermes/memories/MEMORY.md
+
+    Returns:
+        写入的条目总数
+    """
+    from hermes_self_opt.writer import MEMORY_FILE
+
+    parts = []
+    total = 0
+
+    for category, filename in CATEGORIES.items():
+        entries = _read_yaml(CORE_DIR / filename)
+        if not entries:
+            continue
+        for e in entries[-15:]:  # 每种最多保留 15 条
+            content = e.get("content", "").strip()
+            if content:
+                parts.append(f"§\n{content}\n")
+                total += 1
+
+    if parts:
+        MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        MEMORY_FILE.write_text("".join(parts), encoding="utf-8")
+        logger.info("Synced %d Core Memory entries to %s", total, MEMORY_FILE)
+
+    return total

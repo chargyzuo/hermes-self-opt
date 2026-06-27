@@ -59,12 +59,14 @@ def distill_daily(
     date_str: Optional[str] = None,
     *,
     auxiliary_client=None,
+    sync: bool = True,
 ) -> Dict[str, Any]:
     """将指定日期的 Daily Memory 蒸馏为 Core Memory 条目。
 
     Args:
         date_str: 日期字符串 "YYYY-MM-DD"，默认今天
         auxiliary_client: auxiliary LLM client（可选）
+        sync: 蒸馏后是否同步回 MEMORY.md
 
     Returns:
         {"distilled_count": int, "daily_chars": int, "path": str, "reason": str}
@@ -112,7 +114,15 @@ def distill_daily(
 
     # 按类别写入 Core Memory
     count = _save_distilled(result)
-    return {"distilled_count": count, "daily_chars": daily_chars, "path": str(daily_file), "reason": "ok"}
+    result = {"distilled_count": count, "daily_chars": daily_chars, "path": str(daily_file), "reason": "ok"}
+
+    # 同步回 MEMORY.md
+    if sync and count > 0:
+        from hermes_self_opt.core_memory import sync_to_memory_md
+        synced = sync_to_memory_md()
+        result["synced"] = synced
+
+    return result
 
 
 def _save_distilled(result: dict) -> int:

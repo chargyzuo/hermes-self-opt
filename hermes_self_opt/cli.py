@@ -177,6 +177,8 @@ def _handle_distill(args) -> int:
         result = distill_daily(args.date)
         if result["distilled_count"] > 0:
             print(f"✅ 蒸馏完成: {result['distilled_count']} 条记忆从 {result['daily_chars']} 字符的 Daily 中提取")
+            if result.get("synced", 0) > 0:
+                print(f"📝 已同步 {result['synced']} 条到 MEMORY.md")
         else:
             print(f"⏭️  {result['reason']} (daily: {result.get('daily_chars', 0)} chars)")
         if args.cleanup:
