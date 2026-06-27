@@ -132,11 +132,19 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     rp_parser.add_argument("--yes", "-y", action="store_true", help="Auto-approve review")
     rp_parser.add_argument("--dry-run", action="store_true", help="Simulate, don't write/commit")
     rp_parser.add_argument("--skip-gate", action="store_true", help="Skip Gate-Full checks")
+    rp_parser.add_argument("--judge", action="store_true", help="Run LLM Judge after Gate-Full")
     rp_parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+
+    # optimize (P3: skill optimization loop)
+    opt_parser = sub.add_parser("optimize", help="Phase 3: Rollout→Reflect→Edit→Gate-Lite skill optimization")
+    opt_parser.add_argument("--skill-name", help="Optimize a single skill (omit for all)")
+    opt_parser.add_argument("--dry-run", action="store_true", help="Simulate, don't write skills")
+    opt_parser.add_argument("--max-iters", type=int, default=3, help="Max iterations per skill (default: 3)")
+    opt_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
     for p in [harvest_parser, mine_parser, run_parser, distill_parser, mem_parser,
               router_parser, extract_parser, dk_parser, gf_parser, rv_parser, cm_parser, ks_parser, es_parser, jd_parser,
-              rp_parser]:
+              rp_parser, opt_parser]:
         p.set_defaults(func=cmd_self_opt)
     gate_parser.set_defaults(func=cmd_self_opt)
 
@@ -181,6 +189,8 @@ def handle_self_opt(args) -> int:
         return _handle_judge(args)
     elif command == "run-pipeline":
         return _handle_run_pipeline(args)
+    elif command == "optimize":
+        return _handle_optimize(args)
     else:
         print(f"Unknown command: {command}")
         return 1
@@ -629,6 +639,23 @@ def _handle_run_pipeline(args) -> int:
                 print("Fix errors and retry, or use --skip-gate.")
                 return 1
             print(f"✅ Gate-Full: {gate_result['passed']} passed")
+
+            # ── Stage 4b: LLM Judge (optional) ──
+            if args.judge:
+                from hermes_self_opt.gate_full import run_llm_judge
+                print()
+                print("[4b/5] LLM Judge: evaluating full docs against benchmark ...")
+                judge = run_llm_judge(verbose=args.verbose)
+                if judge.get("error"):
+                    print(f"  ⚠️  {judge['error']}")
+                elif judge["results"]:
+                    s = judge["summary"]
+                    print(f"  {judge['total']} full docs scored")
+                    print(f"  avg score: {s['avg_score']}/5  |  redline fails: {s['redline_fails']}  |  top: {s['top_match']}")
+                    if args.verbose:
+                        for r in judge["results"]:
+                            status = "✅" if r["redline_pass"] else "❌"
+                            print(f"    {status} {r['id']}  score={r['coverage_score']}  {r['reason'][:60]}")
         else:
             print("[4/5] Gate-Full: ⚠️  skipped (--skip-gate)")
 
@@ -650,6 +677,66 @@ def _handle_run_pipeline(args) -> int:
         print("✅ Pipeline complete!")
         print("=" * 60)
         return 0
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_optimize(args) -> int:
+    """Phase 3: skill optimization loop (Rollout → Reflect → Edit → Gate-Lite)."""
+    from hermes_self_opt.skillopt import optimize_skill, optimize_all, _load_all_benchmark_skills
+
+    try:
+        if args.skill_name:
+            result = optimize_skill(
+                args.skill_name,
+                max_iterations=args.max_iters,
+                dry_run=args.dry_run,
+            )
+            results = [result]
+        else:
+            results = optimize_all(
+                max_iterations=args.max_iters,
+                dry_run=args.dry_run,
+            )
+
+        if args.json:
+            print(json.dumps(results, indent=2, ensure_ascii=False))
+        else:
+            for r in results:
+                name = r.get("skill_name", "?")
+                error = r.get("error")
+                if error:
+                    print(f"[{name}] ❌ {error}")
+                    continue
+
+                bm_count = r.get("benchmark_count", 0)
+                its = r.get("iterations", [])
+                passed = r.get("passed", False)
+                written = r.get("written", False)
+                final = r.get("final_score", "?")
+
+                status = "✅" if passed else "❌"
+                written_mark = " (written)" if written else (" (dry-run)" if args.dry_run else "")
+                print(f"[{name}] {status} score={final} | {len(its)} iters | {bm_count} benchmarks{written_mark}")
+
+                for it in its:
+                    it_num = it.get("iteration", "?")
+                    score = it.get("coverage_score", "?")
+                    ok = it.get("all_passed", False)
+                    tag = "✅" if ok else "🔄"
+                    print(f"  iter {it_num}: {tag} score={score}")
+                    for bm in it.get("benchmarks", []):
+                        bid = bm.get("id", "?")
+                        bm_score = bm.get("coverage_score", "?")
+                        bm_rl = "✅" if bm.get("redline_pass") else "❌"
+                        print(f"    {bid}: score={bm_score} redline={bm_rl}")
+
+        total_passed = sum(1 for r in results if r.get("passed"))
+        total = len(results)
+        print(f"\nTotal: {total_passed}/{total} skills passed")
+        return 0 if total_passed == total else 1
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
