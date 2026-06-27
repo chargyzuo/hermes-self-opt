@@ -173,9 +173,17 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     fb_reject.add_argument("--id", required=True, dest="correction_id", help="Correction ID to reject")
     fb_reject.add_argument("--reason", default="", help="Rejection reason")
 
+    # eventlog
+    el_parser = sub.add_parser("eventlog", help="View all self-opt events (skill/knowledge/cron changes)")
+    el_parser.add_argument("--type", default="all", choices=["all", "skill", "knowledge", "cron"],
+                           help="Filter by event type (default: all)")
+    el_parser.add_argument("--days", type=int, default=7, help="Days to look back (default: 7)")
+    el_parser.add_argument("--limit", type=int, default=50, help="Max events to show (default: 50)")
+    el_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
     for p in [harvest_parser, mine_parser, process_parser, distill_parser, mem_parser,
               router_parser, extract_parser, dk_parser, gf_parser, rv_parser, cm_parser, ks_parser, es_parser, jd_parser,
-              kb_parser, opt_parser, cry_parser, fb_parser]:
+              kb_parser, opt_parser, cry_parser, fb_parser, el_parser]:
         p.set_defaults(func=cmd_self_opt)
     gate_parser.set_defaults(func=cmd_self_opt)
 
@@ -234,6 +242,8 @@ def handle_self_opt(args) -> int:
         return _handle_crystallize(args)
     elif command == "feedback":
         return _handle_feedback(args)
+    elif command == "eventlog":
+        return _handle_eventlog(args)
     else:
         print(f"Unknown command: {command}")
         return 1
@@ -353,7 +363,10 @@ def _handle_memory(args) -> int:
 
 
 def _handle_router(args) -> int:
-    from hermes_self_opt.router import build_index, query, stats, monitor
+    from hermes_self_opt.router import (
+        build_index, query, stats, monitor,
+        find_description_gap, rewrite_description, rollback_skill,
+    )
     sub = args.router_command
     try:
         if sub == "build":
@@ -372,6 +385,37 @@ def _handle_router(args) -> int:
             s = stats()
             print(f"已索引: {s['indexed_skills']} 个 skill")
             print(f"匹配事件: {s['total_events']} 次")
+            return 0
+        elif sub == "gap":
+            gap_result = find_description_gap(args.skill_name)
+            if gap_result:
+                print(f"⚠️  {args.skill_name}: 存在 description gap")
+                print(f"  未覆盖的说法: {gap_result}")
+            else:
+                print(f"✅ {args.skill_name}: 无 description gap")
+            return 0
+        elif sub == "rewrite":
+            rw_result = rewrite_description(
+                args.skill_name,
+                dry_run=getattr(args, "dry_run", False),
+            )
+            if rw_result["action"] == "rewrote":
+                print(f"✅ 已重写 {args.skill_name}")
+                print(f"  old: {rw_result['old'][:80]}")
+                print(f"  new: {rw_result['new'][:80]}")
+            elif rw_result["action"] == "dry_run":
+                print(f"🔍 [dry-run] {args.skill_name}")
+                print(f"  old: {rw_result['old'][:80]}")
+                print(f"  new: {rw_result['new'][:80]}")
+            else:
+                print(f"⏭️  {args.skill_name}: {rw_result.get('reason', rw_result['action'])}")
+            return 0
+        elif sub == "rollback":
+            rb_result = rollback_skill(args.skill_name)
+            if rb_result["action"] == "rolled_back":
+                print(f"✅ 已回滚 {args.skill_name} → {rb_result['path']}")
+            else:
+                print(f"⏭️  {args.skill_name}: {rb_result.get('reason', rb_result['action'])}")
             return 0
         elif sub == "monitor":
             m = monitor(skill_name=getattr(args, "skill", None), days=args.days)
@@ -395,7 +439,7 @@ def _handle_router(args) -> int:
                 print("\n  无匹配数据")
             return 0
         else:
-            print("Usage: hermes self-opt router <build|query|stats|monitor>")
+            print("Usage: hermes self-opt router <build|query|stats|gap|rewrite|rollback|monitor>")
             return 1
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -968,6 +1012,26 @@ def _handle_feedback(args) -> int:
             print(f"Unknown feedback command: {sub}")
             return 1
 
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_eventlog(args) -> int:
+    """Handle hermes self-opt eventlog command."""
+    from hermes_self_opt.eventlog import query, format_output
+    try:
+        result = query(
+            target=args.type,
+            days=args.days,
+            limit=args.limit,
+            json_output=args.json,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        else:
+            print(format_output(result))
+        return 0
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
