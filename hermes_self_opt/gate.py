@@ -125,14 +125,16 @@ def gate_skill(skill_content: str, auxiliary_client=None, benchmark_path: Option
     if not skill_content or not skill_content.strip():
         return {"decision": "skip", "coverage_score": 0, "reason": "无 skill 内容"}
 
+    # === 优先做本地基本检查（快、确定） ===
+    if len(skill_content) > 15000:
+        return {"decision": "fail", "coverage_score": 0, "reason": "skill 过长（>15KB）"}
+    if _has_sensitive_content(skill_content):
+        return {"decision": "fail", "coverage_score": 0, "reason": "包含敏感信息（密码/token）"}
+
+    # === 加载 Benchmark，如果有就调 LLM Judge，没有就降级 ===
     benchmark = _load_benchmark(benchmark_path)
     if not benchmark:
-        # 没有 Benchmark 时只做基本检查：长度 + 敏感信息
-        if len(skill_content) > 15000:
-            return {"decision": "fail", "coverage_score": 0, "reason": "skill 过长（>15KB）"}
-        if _has_sensitive_content(skill_content):
-            return {"decision": "fail", "coverage_score": 0, "reason": "包含敏感信息"}
-        return {"decision": "pass", "coverage_score": 3, "reason": "无 Benchmark，仅通过基本检查"}
+        return {"decision": "pass", "coverage_score": 3, "reason": "无 Benchmark，通过基本检查"}
 
     if auxiliary_client is None:
         from agent.auxiliary_client import call_llm
@@ -150,15 +152,10 @@ def gate_skill(skill_content: str, auxiliary_client=None, benchmark_path: Option
             response_text = str(response)
 
         if not response_text.strip():
-            # LLM 返回空，降级为基本检查
-            if len(skill_content) > 15000:
-                return {"decision": "fail", "coverage_score": 0, "reason": "skill 过长（>15KB）"}
-            if _has_sensitive_content(skill_content):
-                return {"decision": "fail", "coverage_score": 0, "reason": "包含敏感信息"}
-            return {"decision": "pass", "coverage_score": 3, "reason": "LLM 返回空，降级为基本检查"}
+            return {"decision": "pass", "coverage_score": 3, "reason": "LLM 返回空，基本检查已通过"}
     except Exception as e:
         logger.warning("Gate LLM call failed: %s", e)
-        return {"decision": "pass", "coverage_score": 3, "reason": f"LLM 调用失败，默认通过: {e}"}
+        return {"decision": "pass", "coverage_score": 3, "reason": f"LLM 调用失败，基本检查已通过: {e}"}
 
     try:
         result = json.loads(response_text)
