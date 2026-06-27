@@ -25,6 +25,15 @@ SKILLS_ROOT = Path.home() / ".hermes" / "skills"
 MIN_SCORE = 0.3
 
 
+def _has_cjk(text: str) -> bool:
+    """检测是否包含 CJK 字符（中文等）。"""
+    for ch in text:
+        cp = ord(ch)
+        if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF:
+            return True
+    return False
+
+
 def _get_conn() -> sqlite3.Connection:
     """获取 FTS5 数据库连接。"""
     ROUTER_DB.parent.mkdir(parents=True, exist_ok=True)
@@ -84,7 +93,7 @@ def build_index() -> Dict[str, Any]:
 
 
 def query(user_input: str, top_k: int = 3) -> List[Dict[str, Any]]:
-    """LIKE 子串匹配。139 条数据线性扫描 <5ms。"""
+    """LIKE 子串 + CJK trigram 重叠匹配。139 条数据线性扫描 <5ms。"""
     if not ROUTER_DB.exists():
         return []
 
@@ -94,18 +103,33 @@ def query(user_input: str, top_k: int = 3) -> List[Dict[str, Any]]:
     conn.close()
 
     terms = [t for t in lower.replace(",", " ").split() if len(t) >= 2]
+    has_cjk = _has_cjk(user_input)
     scored = []
     for row in rows:
         dl = row["desc_lower"] or ""
         nl = row["name_lower"] or ""
         score = 0.0
+        # Space-separated term matching (English + mixed)
         for term in terms:
             if term in dl:
                 score += 1.0 / len(terms)
             elif term in nl:
                 score += 0.5 / len(terms)
+        # Exact substring boost
         if lower in dl:
             score += 0.5
+        # CJK: character-level overlap — handles Chinese where split() fails
+        if has_cjk:
+            cjk_query_chars = [ch for ch in lower if '\u4e00' <= ch <= '\u9fff']
+            if cjk_query_chars:
+                cjk_desc_chars = set(ch for ch in dl if '\u4e00' <= ch <= '\u9fff')
+                cjk_hits = sum(1 for ch in cjk_query_chars if ch in cjk_desc_chars)
+                score += (cjk_hits / len(cjk_query_chars)) * 0.5
+            # Reverse match: English tokens from description appearing in query
+            desc_tokens = [t for t in dl.split() if len(t) >= 2]
+            for tok in desc_tokens:
+                if tok in lower:
+                    score += 0.12 / max(len(desc_tokens), 1)
         if score >= MIN_SCORE:
             scored.append({
                 "name": row["name"],
