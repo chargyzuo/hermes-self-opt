@@ -23,6 +23,10 @@ MEMORY_FILE = Path.home() / ".hermes" / "memories" / "MEMORY.md"
 SKILL_DIR = Path.home() / ".hermes" / "skills" / "self-opt"
 # Log 目录
 LOG_DIR = Path.home() / ".hermes" / "self-opt" / "logs"
+# Daily Memory 目录（Phase 3）
+DAILY_DIR = Path.home() / ".hermes" / "memories" / "daily"
+# Core Memory 目录（Phase 3）
+CORE_DIR = Path.home() / ".hermes" / "memories" / "core"
 
 
 def _ensure_dirs():
@@ -30,6 +34,8 @@ def _ensure_dirs():
     MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     SKILL_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    DAILY_DIR.mkdir(parents=True, exist_ok=True)
+    CORE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def write_memory(chunk: str) -> Dict[str, Any]:
@@ -55,6 +61,39 @@ def write_memory(chunk: str) -> Dict[str, Any]:
     chars = len(chunk)
     logger.info("Appended %d chars to %s", chars, MEMORY_FILE)
     return {"success": True, "path": str(MEMORY_FILE), "chars_added": chars}
+
+
+def write_daily(chunk: str, *, source_session: str = "") -> Dict[str, Any]:
+    """将 memory_chunk 写入当天的 Daily Memory 文件。
+
+    Phase 3：替代 Phase 1 的 write_memory，从直接写 MEMORY.md
+    改为写入 daily/<日期>.md，供后续 Deep Dream 蒸馏使用。
+
+    Args:
+        chunk: Mine 提取的 memory 内容
+        source_session: 来源 session ID（用于日志）
+
+    Returns:
+        {"success": bool, "path": str, "chars_added": int}
+    """
+    if not chunk or not chunk.strip():
+        return {"success": False, "path": "", "chars_added": 0, "reason": "空内容"}
+
+    _ensure_dirs()
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    daily_file = DAILY_DIR / f"{today}.md"
+
+    timestamp = datetime.now().strftime("%H:%M")
+    session_tag = f" [{source_session[:16]}]" if source_session else ""
+    entry = f"§ [{today} {timestamp}]{session_tag}\n{chunk.strip()}\n\n"
+
+    with open(daily_file, "a", encoding="utf-8") as f:
+        f.write(entry)
+
+    chars = len(entry)
+    logger.info("Appended %d chars to %s", chars, daily_file)
+    return {"success": True, "path": str(daily_file), "chars_added": chars}
 
 
 def write_skill(

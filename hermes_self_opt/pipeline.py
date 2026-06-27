@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from hermes_self_opt.harvest import harvest, harvest_recent
 from hermes_self_opt.mine import mine
 from hermes_self_opt.gate import gate_memory, gate_skill
-from hermes_self_opt.writer import write_memory, write_skill, write_log
+from hermes_self_opt.writer import write_daily, write_skill, write_log
 from hermes_self_opt.filter import looks_like_troubleshooting
 
 logger = logging.getLogger(__name__)
@@ -95,7 +95,10 @@ def run_session(
     # Step 4: Write
     write_results = {}
     if memory_result["decision"] == "pass":
-        write_results["memory"] = write_memory(mined["memory_chunk"])
+        write_results["memory"] = write_daily(
+            mined["memory_chunk"],
+            source_session=session_id,
+        )
     if skill_result["decision"] == "pass" and skill_candidate.get("name"):
         write_results["skill"] = write_skill(
             skill_candidate["name"],
