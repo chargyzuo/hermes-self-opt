@@ -142,9 +142,16 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     opt_parser.add_argument("--max-iters", type=int, default=3, help="Max iterations per skill (default: 3)")
     opt_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
+    # crystallize (P3: new skill generation)
+    cry_parser = sub.add_parser("crystallize", help="Phase 3: detect recurring patterns → generate new skills")
+    cry_parser.add_argument("--days", type=int, default=7, help="Days of sessions to analyze (default: 7)")
+    cry_parser.add_argument("--dry-run", action="store_true", help="Simulate, don't write skills")
+    cry_parser.add_argument("--detect-only", action="store_true", help="Only detect patterns, don't generate")
+    cry_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
     for p in [harvest_parser, mine_parser, run_parser, distill_parser, mem_parser,
               router_parser, extract_parser, dk_parser, gf_parser, rv_parser, cm_parser, ks_parser, es_parser, jd_parser,
-              rp_parser, opt_parser]:
+              rp_parser, opt_parser, cry_parser]:
         p.set_defaults(func=cmd_self_opt)
     gate_parser.set_defaults(func=cmd_self_opt)
 
@@ -191,6 +198,8 @@ def handle_self_opt(args) -> int:
         return _handle_run_pipeline(args)
     elif command == "optimize":
         return _handle_optimize(args)
+    elif command == "crystallize":
+        return _handle_crystallize(args)
     else:
         print(f"Unknown command: {command}")
         return 1
@@ -737,6 +746,77 @@ def _handle_optimize(args) -> int:
         total = len(results)
         print(f"\nTotal: {total_passed}/{total} skills passed")
         return 0 if total_passed == total else 1
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_crystallize(args) -> int:
+    """Phase 3: cross-session pattern detection → new skill generation."""
+    from hermes_self_opt.crystallize import crystallize, crystallize_detect
+
+    try:
+        if args.detect_only:
+            result = crystallize_detect(days=args.days)
+            if args.json:
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            else:
+                sc = result.get("session_count", 0)
+                enough = result.get("enough_sessions", False)
+                reason = result.get("reason", "")
+                print(f"Sessions found: {sc} (need ≥ {result.get('min_sessions_for_pattern', '?')})")
+                print(f"Enough: {'✅' if enough else '❌'}")
+                if reason:
+                    print(f"  {reason}")
+            return 0
+
+        result = crystallize(days=args.days, dry_run=args.dry_run)
+
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            sp = result.get("sessions_processed", 0)
+            error = result.get("error")
+            reason = result.get("reason")
+            if error:
+                print(f"❌ {error}")
+                return 1
+            if reason:
+                print(f"⏭️  {reason} (sessions: {sp})")
+                return 0
+
+            pf = result.get("patterns_found", False)
+            print(f"Sessions analyzed: {sp}")
+            print(f"Patterns found: {'✅' if pf else '❌'}")
+
+            skills = result.get("skills_generated", [])
+            if not skills:
+                print("No new skills generated.")
+            else:
+                print(f"\nSkills generated: {len(skills)}")
+                for s in skills:
+                    name = s.get("name", "?")
+                    dup = s.get("duplicate", False)
+                    passed = s.get("gate_passed", False)
+                    written = s.get("written", False)
+                    score = s.get("gate_score", "?")
+
+                    if dup:
+                        print(f"  ⏭️  {name}: duplicate ({s.get('reason', '')})")
+                    elif passed:
+                        mark = " (written)" if written else " (dry-run)"
+                        print(f"  ✅ {name}: score={score}{mark}")
+                        print(f"     {s.get('description', '')[:80]}")
+                    else:
+                        print(f"  ❌ {name}: score={score} ({s.get('reason', '')[:60]})")
+
+                tg = result.get("total_generated", 0)
+                tp = result.get("total_passed", 0)
+                tw = result.get("total_written", 0)
+                print(f"\nTotal: {tp}/{tg} passed, {tw} written")
+
+        return 0
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
