@@ -46,6 +46,15 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     gate_parser.add_argument("--skill-file", required=True, help="Path to SKILL.md to validate")
     gate_parser.add_argument("--benchmark", help="Path to benchmark JSON")
 
+    # distill
+    distill_parser = sub.add_parser("distill", help="Phase 3: distill daily → core memory")
+    distill_parser.add_argument("--date", help="Date to distill (default: today)")
+    distill_parser.add_argument("--cleanup", action="store_true", help="Clean old daily files after")
+
+    # memory
+    mem_parser = sub.add_parser("memory", help="Show Core Memory stats")
+    mem_parser.add_argument("--show", action="store_true", help="Show full Core Memory content")
+
     # run
     run_parser = sub.add_parser("run", help="Run full self-opt pipeline")
     run_parser.add_argument("--session-id", help="Single session to process")
@@ -75,6 +84,10 @@ def handle_self_opt(args) -> int:
         return _handle_gate(args)
     elif command == "run":
         return _handle_run(args)
+    elif command == "distill":
+        return _handle_distill(args)
+    elif command == "memory":
+        return _handle_memory(args)
     else:
         print(f"Unknown command: {command}")
         return 1
@@ -152,6 +165,39 @@ def _handle_run(args) -> int:
                 log = r.get("log_path", "")
                 if log:
                     print(f"  log:       {log}")
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_distill(args) -> int:
+    from hermes_self_opt.distill import distill_daily, cleanup_daily
+    try:
+        result = distill_daily(args.date)
+        if result["distilled_count"] > 0:
+            print(f"✅ 蒸馏完成: {result['distilled_count']} 条记忆从 {result['daily_chars']} 字符的 Daily 中提取")
+        else:
+            print(f"⏭️  {result['reason']} (daily: {result.get('daily_chars', 0)} chars)")
+        if args.cleanup:
+            deleted = cleanup_daily()
+            if deleted:
+                print(f"🧹 清理了 {deleted} 个过期的 Daily 文件")
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_memory(args) -> int:
+    from hermes_self_opt.core_memory import stats, load_all
+    try:
+        s = stats()
+        print(f"Core Memory ({sum(s.values())} 条):")
+        for cat, count in s.items():
+            print(f"  {cat}: {count} 条")
+        if args.show:
+            print(f"\n{load_all()}")
         return 0
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
