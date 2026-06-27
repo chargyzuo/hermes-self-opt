@@ -13,7 +13,7 @@ hermes-self-opt/
 │   ├── harvest.py      # Step 1: 从 Session DB 读取数据
 │   ├── mine.py          # Step 2: LLM 提取三样东西
 │   ├── gate.py          # Step 3: Gate-Lite 验证
-│   ├── writer.py        # Step 4: 写入 Memory & Skills
+│   ├── writer.py        # Step 4: 写入 Memory & Skills，知识库生成
 │   ├── pipeline.py      # Step 5: 串联全流程
 │   └── cli.py           # hermes self-opt 子命令
 └── tests/
