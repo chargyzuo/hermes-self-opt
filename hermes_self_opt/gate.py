@@ -70,9 +70,9 @@ def _has_sensitive_content(text: str) -> bool:
 
 
 def _load_benchmark(benchmark_path: Optional[str] = None) -> str:
-    """加载 Benchmark 题库，返回格式化的文本。
+    """加载知识库 Benchmark 题库，返回格式化的文本。
 
-    返回内容包含每条 Benchmark 的问题、必要步骤和红线，
+    返回内容包含每条 Benchmark 的问题/场景、必要步骤和红线，
     供 LLM Judge 做两个维度的评分。
     """
     if benchmark_path:
@@ -89,35 +89,89 @@ def _load_benchmark(benchmark_path: Optional[str] = None) -> str:
         if not isinstance(data, list) or len(data) == 0:
             return ""
 
-        parts = []
-        for item in data:
-            bid = item.get("id", "?")
-            question = item.get("question", "")
-            required = item.get("required_steps", [])
-            redlines = item.get("redlines", [])
-
-            parts.append(f"## {bid}: {question}")
-            parts.append("必要步骤:")
-            for s in required:
-                parts.append(f"  - {s}")
-            parts.append("红线 (绝对不能出现在 skill 中):")
-            for r in redlines:
-                parts.append(f"  - {r}")
-            parts.append("")
-
-        return "\n".join(parts)
+        return _format_benchmark_entries(data)
     except (json.JSONDecodeError, OSError) as e:
         logger.warning("Failed to load benchmark: %s", e)
         return ""
 
 
-def gate_skill(skill_content: str, auxiliary_client=None, benchmark_path: Optional[str] = None) -> Dict[str, Any]:
+def _load_skill_execution_benchmark(skill_name: str) -> str:
+    """加载 Skill Execution Benchmark，按 skill 名过滤匹配的测试条目。
+
+    从 skill_execution_benchmark.json 中筛选 skill 字段匹配的条目，
+    格式化后供 LLM Judge 对自动生成的 skill 做精准评分。
+
+    Args:
+        skill_name: skill 名称（如 huawei-mac-auth-debug）
+
+    Returns:
+        格式化的 benchmark 文本；无匹配条目时返回空字符串
+    """
+    path = Path.home() / ".hermes" / "knowledge" / "self-opt" / "skill_execution_benchmark.json"
+
+    if not path.exists():
+        logger.info("Skill execution benchmark not found at %s", path)
+        return ""
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, list) or len(data) == 0:
+            return ""
+
+        # 按 skill_name 过滤匹配的条目
+        matched = [item for item in data if item.get("skill", "") == skill_name]
+        if not matched:
+            logger.info("No benchmark entries found for skill '%s'", skill_name)
+            return ""
+
+        return _format_benchmark_entries(matched)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to load skill execution benchmark: %s", e)
+        return ""
+
+
+def _format_benchmark_entries(entries: List[Dict[str, Any]]) -> str:
+    """将 benchmark 条目列表格式化为 LLM Judge 可读的文本。
+
+    同时支持知识库 benchmark（question 字段）和
+    skill execution benchmark（scenario 字段）。
+    """
+    parts = []
+    for item in entries:
+        bid = item.get("id", "?")
+        # 同时支持 question（知识库）和 scenario（技能）字段
+        question = item.get("question", "") or item.get("scenario", "")
+        required = item.get("required_steps", [])
+        redlines = item.get("redlines", [])
+
+        parts.append(f"## {bid}: {question}")
+        parts.append("必要步骤:")
+        for s in required:
+            parts.append(f"  - {s}")
+        parts.append("红线 (绝对不能出现在 skill 中):")
+        for r in redlines:
+            parts.append(f"  - {r}")
+        parts.append("")
+
+    return "\n".join(parts)
+
+
+def gate_skill(
+    skill_content: str,
+    auxiliary_client=None,
+    benchmark_path: Optional[str] = None,
+    skill_name: Optional[str] = None,
+) -> Dict[str, Any]:
     """对 skill 草稿做 LLM Judge 评分。
+
+    优先使用 skill_name 匹配的 Skill Execution Benchmark，
+    未匹配时降级到知识库 benchmark（benchmark_path 或默认 benchmark.json）。
 
     Args:
         skill_content: SKILL.md 内容
         auxiliary_client: Hermes auxiliary client
-        benchmark_path: Benchmark 题库路径（可选）
+        benchmark_path: 知识库 Benchmark 题库路径（可选）
+        skill_name: skill 名称，用于匹配 Skill Execution Benchmark
 
     Returns:
         {"decision": "pass"|"fail"|"skip", "coverage_score": int, "reason": str}
@@ -131,10 +185,29 @@ def gate_skill(skill_content: str, auxiliary_client=None, benchmark_path: Option
     if _has_sensitive_content(skill_content):
         return {"decision": "fail", "coverage_score": 0, "reason": "包含敏感信息（密码/token）"}
 
-    # === 加载 Benchmark，如果有就调 LLM Judge，没有就降级 ===
-    benchmark = _load_benchmark(benchmark_path)
+    # === 加载 Benchmark ===
+    # 优先级：Skill Execution Benchmark（精准匹配）→ 知识库 Benchmark → 降级
+    benchmark = ""
+    source = ""
+
+    if skill_name:
+        benchmark = _load_skill_execution_benchmark(skill_name)
+        if benchmark:
+            source = f"Skill Execution Benchmark ({skill_name})"
+        else:
+            logger.info("Skill '%s' not in skill benchmark, falling back to knowledge benchmark", skill_name)
+
     if not benchmark:
-        return {"decision": "pass", "coverage_score": 3, "reason": "无 Benchmark，通过基本检查"}
+        benchmark = _load_benchmark(benchmark_path)
+        if benchmark:
+            source = "知识库 Benchmark"
+        else:
+            source = "无 Benchmark"
+
+    if not benchmark:
+        return {"decision": "pass", "coverage_score": 3, "reason": "无匹配 Benchmark，通过基本检查"}
+
+    logger.info("Gate-Lite scoring with: %s", source)
 
     if auxiliary_client is None:
         from agent.auxiliary_client import call_llm
@@ -179,6 +252,11 @@ def gate_skill(skill_content: str, auxiliary_client=None, benchmark_path: Option
             coverage = result.get("coverage_score", 3)
             redline = result.get("redline_pass", True)
             reason = result.get("reason", "repaired escape")
+            if not redline:
+                return {"decision": "fail", "coverage_score": coverage, "reason": f"红线检查失败: {reason}"}
+            if coverage < 2:
+                return {"decision": "fail", "coverage_score": coverage, "reason": f"必要步骤覆盖不足: {reason}"}
+            return {"decision": "pass", "coverage_score": coverage, "reason": reason}
         except (json.JSONDecodeError, KeyError):
             return {"decision": "pass", "coverage_score": 3, "reason": f"评分解析失败，默认通过: {e}"}
 

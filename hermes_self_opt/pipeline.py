@@ -89,6 +89,7 @@ def run_session(
             skill_candidate["content"],
             auxiliary_client=auxiliary_client,
             benchmark_path=benchmark_path,
+            skill_name=skill_candidate.get("name", ""),
         )
     result["steps"]["gate_skill"] = skill_result
 

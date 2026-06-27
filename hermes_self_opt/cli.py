@@ -55,6 +55,7 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     gate_parser = sub.add_parser("gate", help="Test Gate-Lite: validate a skill file")
     gate_parser.add_argument("--skill-file", required=True, help="Path to SKILL.md to validate")
     gate_parser.add_argument("--benchmark", help="Path to benchmark JSON")
+    gate_parser.add_argument("--skill-name", help="Skill name for matching Skill Execution Benchmark")
 
     # distill
     distill_parser = sub.add_parser("distill", help="Phase 3: distill daily → core memory")
@@ -220,7 +221,7 @@ def _handle_gate(args) -> int:
 
     try:
         content = Path(args.skill_file).read_text(encoding="utf-8")
-        result = gate_skill(content, benchmark_path=args.benchmark)
+        result = gate_skill(content, benchmark_path=args.benchmark, skill_name=getattr(args, "skill_name", None))
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
     except Exception as e:
