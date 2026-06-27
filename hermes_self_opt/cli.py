@@ -4,15 +4,8 @@ cli.py — hermes self-opt CLI 子命令定义。
 提供以下子命令：
   hermes self-opt harvest        --session-id <id>   测试 Harvest
   hermes self-opt mine           --session-id <id>   测试 Mine
-  hermes self-opt run            [--session-id <id>] 全流程
-                                 [--days 1]
-  Phase 2 — Knowledge Pipeline:
-  hermes self-opt extract                               normal/ MD → 结构化
-  hermes self-opt distill-knowledge   [--dry-run]       MD → staging/ YAML
-  hermes self-opt gate-full           [--verbose] [--judge]  4 项刚性校验
-  hermes self-opt review              [-y]              变更摘要 + y/n 确认
-  hermes self-opt commit              [--dry-run | --skip-gate | --skip-review]  staging→core
-  hermes self-opt run-pipeline        [-y] [--dry-run] [--skip-gate]  P2 一键串联
+  hermes self-opt process               --session-id <id>   处理 session → memory/skill
+  hermes self-opt knowledge-build        [-y] [--dry-run] [--skip-gate]  P2 一键串联
   hermes self-opt knowledge                              知识库统计
   hermes self-opt export-schema       [--dry-run]        导出 _schema.yaml
   hermes self-opt judge               [-v]               LLM 评分
@@ -119,21 +112,21 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     jd_parser.add_argument("--verbose", "-v", action="store_true", help="Per-file results")
     jd_parser.add_argument("--benchmark", help="Benchmark JSON path (default: ~/.hermes/knowledge/self-opt/benchmark.json)")
 
-    # run
-    run_parser = sub.add_parser("run", help="Run full self-opt pipeline")
-    run_parser.add_argument("--session-id", help="Single session to process")
-    run_parser.add_argument("--days", type=int, default=1, help="Days of history to process")
-    run_parser.add_argument("--benchmark", help="Path to benchmark JSON")
-    run_parser.add_argument("--overwrite-skill", action="store_true", help="Overwrite existing skills")
-    run_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    # process (P1: session → memory/skill)
+    process_parser = sub.add_parser("process", help="Process session: Harvest → Mine → Gate-Lite")
+    process_parser.add_argument("--session-id", help="Single session to process")
+    process_parser.add_argument("--days", type=int, default=1, help="Days of history to process")
+    process_parser.add_argument("--benchmark", help="Path to benchmark JSON")
+    process_parser.add_argument("--overwrite-skill", action="store_true", help="Overwrite existing skills")
+    process_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
-    # run-pipeline (P2: one-click knowledge pipeline)
-    rp_parser = sub.add_parser("run-pipeline", help="Phase 2: one-click extract→distill→review→gate→commit")
-    rp_parser.add_argument("--yes", "-y", action="store_true", help="Auto-approve review")
-    rp_parser.add_argument("--dry-run", action="store_true", help="Simulate, don't write/commit")
-    rp_parser.add_argument("--skip-gate", action="store_true", help="Skip Gate-Full checks")
-    rp_parser.add_argument("--judge", action="store_true", help="Run LLM Judge after Gate-Full")
-    rp_parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    # knowledge-build (P2: one-click knowledge pipeline)
+    kb_parser = sub.add_parser("knowledge-build", help="Phase 2: one-click extract→distill→review→gate→commit")
+    kb_parser.add_argument("--yes", "-y", action="store_true", help="Auto-approve review")
+    kb_parser.add_argument("--dry-run", action="store_true", help="Simulate, don't write/commit")
+    kb_parser.add_argument("--skip-gate", action="store_true", help="Skip Gate-Full checks")
+    kb_parser.add_argument("--judge", action="store_true", help="Run LLM Judge after Gate-Full")
+    kb_parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
 
     # optimize (P3: skill optimization loop)
     opt_parser = sub.add_parser("optimize", help="Phase 3: Rollout→Reflect→Edit→Gate-Lite skill optimization")
@@ -176,9 +169,9 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     fb_reject.add_argument("--id", required=True, dest="correction_id", help="Correction ID to reject")
     fb_reject.add_argument("--reason", default="", help="Rejection reason")
 
-    for p in [harvest_parser, mine_parser, run_parser, distill_parser, mem_parser,
+    for p in [harvest_parser, mine_parser, process_parser, distill_parser, mem_parser,
               router_parser, extract_parser, dk_parser, gf_parser, rv_parser, cm_parser, ks_parser, es_parser, jd_parser,
-              rp_parser, opt_parser, cry_parser, fb_parser]:
+              kb_parser, opt_parser, cry_parser, fb_parser]:
         p.set_defaults(func=cmd_self_opt)
     gate_parser.set_defaults(func=cmd_self_opt)
 
@@ -187,7 +180,7 @@ def handle_self_opt(args) -> int:
     """处理 hermes self-opt 命令。"""
     command = args.self_opt_command
     if not command:
-        print("Usage: hermes self-opt <harvest|mine|gate|run> [options]")
+        print("Usage: hermes self-opt <harvest|mine|process|distill|...> [options]")
         print("Run 'hermes self-opt <command> --help' for more info.")
         return 1
 
@@ -197,8 +190,12 @@ def handle_self_opt(args) -> int:
         return _handle_mine(args)
     elif command == "gate":
         return _handle_gate(args)
+    elif command == "process":
+        return _handle_process(args)
     elif command == "run":
-        return _handle_run(args)
+        # deprecated alias
+        print("⚠️  'run' is deprecated, use 'process' instead")
+        return _handle_process(args)
     elif command == "distill":
         return _handle_distill(args)
     elif command == "memory":
@@ -221,8 +218,12 @@ def handle_self_opt(args) -> int:
         return _handle_export_schema(args)
     elif command == "judge":
         return _handle_judge(args)
+    elif command == "knowledge-build":
+        return _handle_knowledge_build(args)
     elif command == "run-pipeline":
-        return _handle_run_pipeline(args)
+        # deprecated alias
+        print("⚠️  'run-pipeline' is deprecated, use 'knowledge-build' instead")
+        return _handle_knowledge_build(args)
     elif command == "optimize":
         return _handle_optimize(args)
     elif command == "crystallize":
@@ -277,7 +278,7 @@ def _handle_gate(args) -> int:
         return 1
 
 
-def _handle_run(args) -> int:
+def _handle_process(args) -> int:
     from hermes_self_opt.pipeline import run
 
     try:
@@ -607,7 +608,7 @@ def _handle_judge(args) -> int:
         return 1
 
 
-def _handle_run_pipeline(args) -> int:
+def _handle_knowledge_build(args) -> int:
     """P2: one-click pipeline: extract → distill → review → gate → commit."""
     from hermes_self_opt.extractor import extract_all
     from hermes_self_opt.distill_knowledge import distill_and_generate
