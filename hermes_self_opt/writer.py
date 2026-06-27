@@ -23,6 +23,8 @@ MEMORY_FILE = Path.home() / ".hermes" / "memories" / "MEMORY.md"
 SKILL_DIR = Path.home() / ".hermes" / "skills" / "self-opt"
 # Log 目录
 LOG_DIR = Path.home() / ".hermes" / "self-opt" / "logs"
+# 变动日志（skill/knowledge 变更记录）
+CHANGE_LOG = Path.home() / ".hermes" / "self-opt" / "change.log"
 # Daily Memory 目录（Phase 3）
 DAILY_DIR = Path.home() / ".hermes" / "memories" / "daily"
 # Core Memory 目录（Phase 3）
@@ -143,6 +145,11 @@ def write_skill(
 
     action = "updated" if skill_file.exists() else "created"
     logger.info("%s skill: %s", action, name)
+
+    # 写入统一变动日志
+    write_change_log("skill", action, name, path=str(skill_file),
+                     source=source_session if source_session else "pipeline")
+
     return {"success": True, "path": str(skill_file), "action": action}
 
 
@@ -172,3 +179,43 @@ def write_log(entry: Dict[str, Any]) -> str:
 
     logger.info("Wrote log: %s", log_file)
     return str(log_file)
+
+
+def write_change_log(
+    target: str,
+    action: str,
+    name: str,
+    *,
+    path: str = "",
+    source: str = "",
+    detail: str = "",
+) -> str:
+    """向统一变动日志追加一条记录。
+
+    Args:
+        target: 目标类型 — "skill" 或 "knowledge"
+        action: 动作 — "created", "updated", "committed", "skipped"
+        name: skill 名或 entry id
+        path: 文件路径
+        source: 来源（session_id 或 "cron"）
+        detail: 额外描述
+
+    Returns:
+        change.log 路径
+    """
+    _ensure_dirs()
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    parts = [ts, target, action, name]
+    if source:
+        parts.append(f"source={source}")
+    if path:
+        parts.append(f"path={path}")
+    if detail:
+        parts.append(f"detail={detail}")
+    line = " | ".join(parts) + "\n"
+
+    with open(CHANGE_LOG, "a", encoding="utf-8") as f:
+        f.write(line)
+
+    logger.info("Change log: %s %s %s", target, action, name)
+    return str(CHANGE_LOG)

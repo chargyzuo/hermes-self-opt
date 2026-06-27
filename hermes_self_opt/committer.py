@@ -15,6 +15,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import yaml
 
+from hermes_self_opt import writer as _writer_mod
+
 logger = logging.getLogger(__name__)
 
 KNOWLEDGE_DIR = Path.home() / ".hermes" / "knowledge"
@@ -197,6 +199,16 @@ def commit_to_core(
             _update_index_for_entry(index, eid, etype, rel, tags, triggers)
         _save_index(index)
         logger.info("Index updated: %d new entries", len(committed_ids))
+
+    # 写入统一变动日志
+    if committed_ids and not dry_run:
+        for eid, etype, rel, _tags, _triggers in committed_ids:
+            _writer_mod.write_change_log(
+                "knowledge", "committed", eid,
+                path=f"core/{rel}",
+                source="pipeline",
+                detail=f"type={etype}",
+            )
 
     total = sum(counts.values())
     logger.info("Committed %d files: %s", total, counts)

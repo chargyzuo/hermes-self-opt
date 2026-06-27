@@ -16,6 +16,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from hermes_self_opt.writer import write_log
+
 try:
     import jieba
     _JIEBA = True
@@ -96,6 +98,11 @@ def build_index() -> Dict[str, Any]:
 
     duration = (time.time() - start) * 1000
     logger.info("Built skill index: %d indexed, %d skipped (%.1f ms)", indexed, skipped, duration)
+
+    # 写入运行日志
+    write_log({"phase": "router-build", "indexed": indexed, "skipped": skipped,
+                "duration_ms": round(duration, 1), "source": "cron"})
+
     return {"indexed": indexed, "skipped": skipped, "duration_ms": round(duration, 1)}
 
 
