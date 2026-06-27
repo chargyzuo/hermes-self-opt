@@ -37,7 +37,7 @@ CONFIDENCE_EVAL_PROMPT = """\
 - low:    分析不完整、缺少关键步骤、或仅仅是现象描述。需进一步验证。
 
 返回 JSON:
-{"confidence": "high|medium|low", "reason": "简要理由(<200字)"}
+{{"confidence": "high|medium|low", "reason": "简要理由(<200字)"}}
 
 待评估知识:
 tags: {tags}
