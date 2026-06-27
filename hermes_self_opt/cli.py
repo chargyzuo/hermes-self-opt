@@ -2,10 +2,20 @@
 cli.py — hermes self-opt CLI 子命令定义。
 
 提供以下子命令：
-  hermes self-opt harvest    --session-id <id>   测试 Harvest
-  hermes self-opt mine       --session-id <id>   测试 Mine
-  hermes self-opt run        [--session-id <id>] 全流程
-                             [--days 1]
+  hermes self-opt harvest        --session-id <id>   测试 Harvest
+  hermes self-opt mine           --session-id <id>   测试 Mine
+  hermes self-opt run            [--session-id <id>] 全流程
+                                 [--days 1]
+  Phase 2 — Knowledge Pipeline:
+  hermes self-opt extract                               normal/ MD → 结构化
+  hermes self-opt distill-knowledge   [--dry-run]       MD → staging/ YAML
+  hermes self-opt gate-full           [--verbose] [--judge]  4 项刚性校验
+  hermes self-opt review              [-y]              变更摘要 + y/n 确认
+  hermes self-opt commit              [--dry-run | --skip-gate | --skip-review]  staging→core
+  hermes self-opt run-pipeline        [-y] [--dry-run] [--skip-gate]  P2 一键串联
+  hermes self-opt knowledge                              知识库统计
+  hermes self-opt export-schema       [--dry-run]        导出 _schema.yaml
+  hermes self-opt judge               [-v]               LLM 评分
 """
 
 from __future__ import annotations
@@ -116,8 +126,16 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     run_parser.add_argument("--overwrite-skill", action="store_true", help="Overwrite existing skills")
     run_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
+    # run-pipeline (P2: one-click knowledge pipeline)
+    rp_parser = sub.add_parser("run-pipeline", help="Phase 2: one-click extract→distill→review→gate→commit")
+    rp_parser.add_argument("--yes", "-y", action="store_true", help="Auto-approve review")
+    rp_parser.add_argument("--dry-run", action="store_true", help="Simulate, don't write/commit")
+    rp_parser.add_argument("--skip-gate", action="store_true", help="Skip Gate-Full checks")
+    rp_parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+
     for p in [harvest_parser, mine_parser, run_parser, distill_parser, mem_parser,
-              router_parser, extract_parser, dk_parser, gf_parser, rv_parser, cm_parser, ks_parser, es_parser, jd_parser]:
+              router_parser, extract_parser, dk_parser, gf_parser, rv_parser, cm_parser, ks_parser, es_parser, jd_parser,
+              rp_parser]:
         p.set_defaults(func=cmd_self_opt)
     gate_parser.set_defaults(func=cmd_self_opt)
 
@@ -160,6 +178,8 @@ def handle_self_opt(args) -> int:
         return _handle_export_schema(args)
     elif command == "judge":
         return _handle_judge(args)
+    elif command == "run-pipeline":
+        return _handle_run_pipeline(args)
     else:
         print(f"Unknown command: {command}")
         return 1
@@ -533,6 +553,103 @@ def _handle_judge(args) -> int:
             print(f"     score={r['coverage_score']}/5  bm={bm}")
             print(f"     {r['reason']}")
         return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_run_pipeline(args) -> int:
+    """P2: one-click pipeline: extract → distill → review → gate → commit."""
+    from hermes_self_opt.extractor import extract_all
+    from hermes_self_opt.distill_knowledge import distill_and_generate
+    from hermes_self_opt.reviewer import scan_staging, review_staging
+    from hermes_self_opt.gate_full import run_gate_checks
+    from hermes_self_opt.committer import commit_to_core
+
+    try:
+        # ── Stage 1: extract ──
+        print("=" * 60)
+        print("Phase 2 Pipeline — One-Click Knowledge Build")
+        print("=" * 60)
+        print()
+        print("[1/5] Extract: normal/ MD → structured data ...")
+        extracted = extract_all()
+        if not extracted:
+            print("❌ No files extracted from normal/ — pipeline stopped.")
+            return 1
+        print(f"✅ Extracted {len(extracted)} files")
+
+        # ── Stage 2: distill ──
+        print()
+        print("[2/5] Distill: dedup + generate YAML → staging/ ...")
+        distill_result = distill_and_generate(extracted, dry_run=args.dry_run)
+        print(f"  Documents:        {distill_result['total_files']}")
+        print(f"  New check_sources:{distill_result['new_check_sources']}")
+        print(f"  New decision_src: {distill_result['new_decision_sources']}")
+        print(f"  New full docs:    {distill_result['new_full_docs']}")
+        print(f"  Duplicates:       {distill_result['duplicates_skipped']}")
+
+        total_new = (distill_result['new_check_sources'] +
+                     distill_result['new_decision_sources'] +
+                     distill_result['new_full_docs'])
+        if total_new == 0:
+            print("✅ No new content — nothing to commit. Pipeline complete.")
+            return 0
+
+        if args.dry_run:
+            print("  (dry-run, no files written)")
+
+        # ── Stage 3: review ──
+        print()
+        print("[3/5] Review: staging/ changes ...")
+        scan_result = scan_staging()
+        if scan_result["total"] == 0:
+            print("⚠️  No files in staging — pipeline stopped.")
+            return 1
+
+        approved, _ = review_staging(scan_result=scan_result, auto_approve=args.yes)
+        if not approved:
+            print("❌ Review rejected — pipeline stopped.")
+            return 1
+
+        if args.dry_run:
+            print("✅ Pipeline complete (dry-run).")
+            return 0
+
+        # ── Stage 4: gate-full ──
+        print()
+        if not args.skip_gate:
+            print("[4/5] Gate-Full: 4 rigid checks ...")
+            gate_result = run_gate_checks(verbose=args.verbose)
+            if not gate_result["all_passed"]:
+                print(f"❌ Gate-Full: {gate_result['passed']} passed, {gate_result['failed']} failed")
+                for e in gate_result["errors"]:
+                    print(f"  [{e['check']}] {e['file']}: {e['message']}")
+                print("Fix errors and retry, or use --skip-gate.")
+                return 1
+            print(f"✅ Gate-Full: {gate_result['passed']} passed")
+        else:
+            print("[4/5] Gate-Full: ⚠️  skipped (--skip-gate)")
+
+        # ── Stage 5: commit ──
+        print()
+        print("[5/5] Commit: staging → core ...")
+        commit_result = commit_to_core(dry_run=False)
+
+        if commit_result.get("error"):
+            print(f"❌ {commit_result['error']}")
+            return 1
+
+        print(f"✅ Committed: {commit_result['committed']} files")
+        print(f"  check_sources:    {commit_result['check_sources']}")
+        print(f"  decision_sources: {commit_result['decision_sources']}")
+        print(f"  full docs:        {commit_result['full_docs']}")
+        print()
+        print("=" * 60)
+        print("✅ Pipeline complete!")
+        print("=" * 60)
+        return 0
+
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
