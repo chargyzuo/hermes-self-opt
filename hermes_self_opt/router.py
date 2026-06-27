@@ -147,8 +147,11 @@ def record_match(
     *,
     session_id: str = "",
     used: bool = True,
+    score: float = 0.0,
+    corrected: bool = False,
+    correction_detail: str = "",
 ) -> None:
-    """记录一次路由匹配事件，用于后续发现 description gap。
+    """记录一次路由匹配事件，用于后续发现 description gap 和触发率监控。
 
     写入 router.db 中的 router_events 表。
     """
@@ -160,12 +163,23 @@ def record_match(
             user_input TEXT,
             matched_skill TEXT,
             used INTEGER,
+            score REAL DEFAULT 0.0,
+            corrected INTEGER DEFAULT 0,
+            correction_detail TEXT DEFAULT '',
             timestamp TEXT DEFAULT (datetime('now'))
         )
     """)
+    # 向后兼容：为旧表加新列
+    for col, col_type in [("score", "REAL DEFAULT 0.0"), ("corrected", "INTEGER DEFAULT 0"),
+                           ("correction_detail", "TEXT DEFAULT ''")]:
+        try:
+            conn.execute("ALTER TABLE router_events ADD COLUMN {} {}".format(col, col_type))
+        except sqlite3.OperationalError:
+            pass
+
     conn.execute(
-        "INSERT INTO router_events (session_id, user_input, matched_skill, used) VALUES (?, ?, ?, ?)",
-        (session_id, user_input, matched_skill, int(used)),
+        "INSERT INTO router_events (session_id, user_input, matched_skill, used, score, corrected, correction_detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (session_id, user_input, matched_skill, int(used), score, int(corrected), correction_detail),
     )
     conn.commit()
     conn.close()
@@ -222,6 +236,133 @@ def stats() -> Dict[str, Any]:
     conn.close()
 
     return {"indexed_skills": count, "total_events": events}
+
+
+def monitor(
+    skill_name: Optional[str] = None,
+    days: int = 7,
+) -> Dict[str, Any]:
+    """路由监控：按 skill 和时间维度统计触发率。
+
+    Args:
+        skill_name: 指定 skill 名，None 则返回所有 skill
+        days: 统计最近 N 天
+
+    Returns:
+        {
+            "period": "last 7 days",
+            "total_events": N,
+            "skills": [
+                {
+                    "name": "aruba-ap-troubleshooting",
+                    "total_matches": 12,
+                    "avg_score": 0.72,
+                    "trigger_rate": 0.85,         # used / total
+                    "correction_rate": 0.08,       # corrected / total
+                    "recent_queries": ["...", ...], # 最近 3 条查询
+                },
+                ...
+            ],
+            "miss_rate": 0.15,        # 无匹配事件占比
+            "overall_correction_rate": 0.05,
+        }
+    """
+    if not ROUTER_DB.exists():
+        return {"period": f"last {days} days", "total_events": 0, "skills": [],
+                "miss_rate": 0.0, "overall_correction_rate": 0.0}
+
+    conn = _get_conn()
+
+    # 确保表存在
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS router_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT, user_input TEXT, matched_skill TEXT,
+            used INTEGER, score REAL DEFAULT 0.0,
+            corrected INTEGER DEFAULT 0, correction_detail TEXT DEFAULT '',
+            timestamp TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+    # 时间过滤子句
+    time_clause = "timestamp >= datetime('now', '-{} days')".format(days)
+    skill_clause = "AND matched_skill = ?" if skill_name else ""
+
+    # ── 总数 ──
+    total_row = conn.execute(
+        "SELECT COUNT(*) as n FROM router_events WHERE {}".format(time_clause)
+    ).fetchone()
+    total_events = total_row["n"] if total_row else 0
+
+    if total_events == 0:
+        conn.close()
+        return {"period": "last {} days".format(days), "total_events": 0, "skills": [],
+                "miss_rate": 0.0, "overall_correction_rate": 0.0}
+
+    # ── 无匹配事件（matched_skill 为空） ──
+    miss_row = conn.execute(
+        "SELECT COUNT(*) as n FROM router_events WHERE {} AND (matched_skill = '' OR matched_skill IS NULL)".format(time_clause)
+    ).fetchone()
+    miss_count = miss_row["n"] if miss_row else 0
+    miss_rate = round(miss_count / total_events, 3) if total_events else 0.0
+
+    # ── 全局纠正率 ──
+    corr_row = conn.execute(
+        "SELECT COUNT(*) as n FROM router_events WHERE {} AND corrected = 1".format(time_clause)
+    ).fetchone()
+    overall_corr = round(corr_row["n"] / total_events, 3) if total_events else 0.0
+
+    # ── 每 skill 统计 ──
+    query = """
+        SELECT matched_skill,
+               COUNT(*) as total,
+               AVG(score) as avg_score,
+               SUM(CASE WHEN used = 1 THEN 1 ELSE 0 END) as used_count,
+               SUM(CASE WHEN corrected = 1 THEN 1 ELSE 0 END) as corrected_count
+        FROM router_events
+        WHERE {} AND matched_skill != '' AND matched_skill IS NOT NULL
+        {}
+        GROUP BY matched_skill
+        ORDER BY total DESC
+    """.format(time_clause, skill_clause)
+
+    params = (skill_name,) if skill_name else ()
+    rows = conn.execute(query, params).fetchall()
+
+    skills = []
+    for row in rows:
+        total = row["total"]
+        used_count = row["used_count"]
+        corrected_count = row["corrected_count"]
+        avg_score = round(row["avg_score"], 3) if row["avg_score"] else 0.0
+        trigger_rate = round(used_count / total, 3) if total else 0.0
+        correction_rate = round(corrected_count / total, 3) if total else 0.0
+
+        # 最近 3 条查询
+        recent = conn.execute(
+            "SELECT user_input FROM router_events WHERE matched_skill = ? ORDER BY timestamp DESC LIMIT 3",
+            (row["matched_skill"],)
+        ).fetchall()
+        recent_queries = [r["user_input"] for r in recent]
+
+        skills.append({
+            "name": row["matched_skill"],
+            "total_matches": total,
+            "avg_score": avg_score,
+            "trigger_rate": trigger_rate,
+            "correction_rate": correction_rate,
+            "recent_queries": recent_queries,
+        })
+
+    conn.close()
+
+    return {
+        "period": "last {} days".format(days),
+        "total_events": total_events,
+        "skills": skills,
+        "miss_rate": miss_rate,
+        "overall_correction_rate": overall_corr,
+    }
 
 
 REWRITE_PROMPT = """优化以下 skill 的描述，使其更准确地覆盖用户的真实说法。

@@ -73,6 +73,10 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     rw.add_argument("--dry-run", action="store_true", help="Preview only, don't write")
     rb = router_sub.add_parser("rollback", help="Rollback skill to last backup")
     rb.add_argument("skill_name", help="Skill name to rollback")
+    rm = router_sub.add_parser("monitor", help="Monitor routing trigger rates")
+    rm.add_argument("--skill", help="Filter by skill name")
+    rm.add_argument("--days", type=int, default=7, help="Days to analyze (default: 7)")
+    rm.add_argument("--json", action="store_true", help="Output as JSON")
 
     # ── Phase 2: Knowledge pipeline ──
 
@@ -349,7 +353,7 @@ def _handle_memory(args) -> int:
 
 
 def _handle_router(args) -> int:
-    from hermes_self_opt.router import build_index, query, stats
+    from hermes_self_opt.router import build_index, query, stats, monitor
     sub = args.router_command
     try:
         if sub == "build":
@@ -369,8 +373,29 @@ def _handle_router(args) -> int:
             print(f"已索引: {s['indexed_skills']} 个 skill")
             print(f"匹配事件: {s['total_events']} 次")
             return 0
+        elif sub == "monitor":
+            m = monitor(skill_name=getattr(args, "skill", None), days=args.days)
+            if getattr(args, "json", False):
+                print(json.dumps(m, indent=2, ensure_ascii=False))
+                return 0
+            print(f"Router Monitor — {m['period']}")
+            print(f"  总事件: {m['total_events']}")
+            print(f"  无匹配率: {m['miss_rate']:.1%}")
+            print(f"  全局纠正率: {m['overall_correction_rate']:.1%}")
+            if m['skills']:
+                print(f"\n  Skills ({len(m['skills'])}):")
+                for sk in m['skills']:
+                    triggers = f"{sk['trigger_rate']:.0%}" if sk['trigger_rate'] > 0 else "N/A"
+                    corr = f"{sk['correction_rate']:.0%}" if sk['correction_rate'] > 0 else "0%"
+                    recent = ", ".join(sk['recent_queries'][:2]) if sk['recent_queries'] else "-"
+                    print(f"    {sk['name']}")
+                    print(f"      匹配: {sk['total_matches']}  触发率: {triggers}  纠正率: {corr}  avg分: {sk['avg_score']}")
+                    print(f"      最近: {recent[:60]}")
+            else:
+                print("\n  无匹配数据")
+            return 0
         else:
-            print("Usage: hermes self-opt router <build|query|stats>")
+            print("Usage: hermes self-opt router <build|query|stats|monitor>")
             return 1
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
