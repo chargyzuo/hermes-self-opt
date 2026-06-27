@@ -443,6 +443,256 @@ def run_gate_checks(
     }
 
 
+# ── LLM Judge (P1-4) ────────────────────────────────────────────────
+
+KNOWLEDGE_JUDGE_PROMPT = """你是一个网络排障知识库评审员。以下是一个知识库条目（full 类型排障流程）和 Benchmark 题库。
+
+## 知识库条目（YAML 排障流程）
+{knowledge_yaml}
+
+## Benchmark 题库（每条都包含：问题 + 必要步骤 + 红线）
+{benchmark}
+
+## 评分标准
+
+1. 匹配 (matched_benchmark): 知识库条目与哪条 Benchmark 最相关？返回 benchmark id 或 null。
+2. 步骤覆盖 (coverage_score, 0-5): 知识库条目是否覆盖了 Benchmark 指定的必要步骤。
+   - 0-1 = 基本不相关或漏掉大部分步骤
+   - 2-3 = 覆盖了部分步骤但缺关键环节
+   - 4-5 = 完整覆盖或超额覆盖
+3. 红线检查 (redline_pass, true/false): 知识库条目是否包含红线操作？
+   注意：除了 Benchmark 列出的红线，也要警惕跳过必经步骤的明显错误。
+
+## 输出格式（严格 JSON）
+```json
+{{
+  "matched_benchmark": "bench-001 或 null",
+  "coverage_score": 0,
+  "redline_pass": true,
+  "reason": "简要说明"
+}}
+```"""
+
+
+def _load_benchmark_for_judge(benchmark_path: Optional[str] = None) -> str:
+    """加载 Benchmark 题库，返回格式化的 LLM prompt 文本。
+
+    复用 gate.py 的逻辑，但独立实现避免循环导入。
+    """
+    import json as _json
+
+    if benchmark_path:
+        path = Path(benchmark_path)
+    else:
+        path = KNOWLEDGE_DIR / "self-opt" / "benchmark.json"
+
+    if not path.exists():
+        logger.info("Benchmark not found at %s, skipping LLM Judge", path)
+        return ""
+
+    try:
+        data = _json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, list) or len(data) == 0:
+            return ""
+
+        parts = []
+        for item in data:
+            bid = item.get("id", "?")
+            question = item.get("question", "")
+            required = item.get("required_steps", [])
+            redlines = item.get("redlines", [])
+
+            parts.append(f"## {bid}: {question}")
+            parts.append("必要步骤:")
+            for s in required:
+                parts.append(f"  - {s}")
+            parts.append("红线:")
+            for r in redlines:
+                parts.append(f"  - {r}")
+            parts.append("")
+
+        return "\n".join(parts)
+    except Exception as e:
+        logger.warning("Failed to load benchmark: %s", e)
+        return ""
+
+
+def _run_llm_judge_for_doc(
+    data: Dict[str, Any],
+    benchmark_text: str,
+    auxiliary_client=None,
+) -> Dict[str, Any]:
+    """对单个知识库条目做 LLM Judge 评分。
+
+    Args:
+        data: full 类型 YAML 数据
+        benchmark_text: 格式化的 benchmark 文本
+        auxiliary_client: Hermes auxiliary LLM client
+
+    Returns:
+        {"id": str, "matched_benchmark": str|null, "coverage_score": int,
+         "redline_pass": bool, "reason": str, "error": str|null}
+    """
+    yaml_id = data.get("id", "?")
+
+    # 只对 full 类型评分
+    if data.get("type") != "full":
+        return {
+            "id": yaml_id,
+            "matched_benchmark": None,
+            "coverage_score": 3,
+            "redline_pass": True,
+            "reason": "非 full 类型，跳过",
+            "error": None,
+        }
+
+    # 生成可读的 YAML 摘要
+    summary_parts = []
+    summary_parts.append(f"id: {yaml_id}")
+    summary_parts.append(f"tags: {data.get('tags', [])}")
+    triggers = data.get("triggers", [])
+    if triggers:
+        summary_parts.append(f"触发条件: {triggers[0][:200]}")
+    summary_parts.append("排障步骤:")
+    for step in data.get("flow", []):
+        step_num = step.get("step", "?")
+        check_id = step.get("check", "?")
+        on_true = step.get("on_true", {})
+        on_false = step.get("on_false", {})
+        summary_parts.append(f"  step {step_num}: check={check_id}")
+        if on_true:
+            summary_parts.append(f"    on_true: {on_true}")
+        if on_false:
+            summary_parts.append(f"    on_false: {on_false}")
+
+    knowledge_yaml = "\n".join(summary_parts[:60])  # 限制长度
+
+    prompt = KNOWLEDGE_JUDGE_PROMPT.format(
+        knowledge_yaml=knowledge_yaml,
+        benchmark=benchmark_text,
+    )
+
+    if auxiliary_client is None:
+        try:
+            from agent.auxiliary_client import call_llm
+            auxiliary_client = call_llm
+        except ImportError:
+            return {
+                "id": yaml_id, "matched_benchmark": None,
+                "coverage_score": 3, "redline_pass": True,
+                "reason": "无法加载 LLM client",
+                "error": "auxiliary_client unavailable",
+            }
+
+    try:
+        import json as _json
+        import re as _re
+
+        messages = [{"role": "user", "content": prompt}]
+        response = auxiliary_client(task="default", messages=messages)
+
+        if hasattr(response, "choices"):
+            response_text = response.choices[0].message.content or ""
+        elif isinstance(response, dict):
+            response_text = response.get("content", "") or response.get("text", "")
+        else:
+            response_text = str(response)
+
+        if not response_text.strip():
+            return {
+                "id": yaml_id, "matched_benchmark": None,
+                "coverage_score": 3, "redline_pass": True,
+                "reason": "LLM 返回空",
+                "error": None,
+            }
+
+        # 尝试解析 JSON
+        try:
+            result = _json.loads(response_text)
+        except (_json.JSONDecodeError, ValueError):
+            fixed = _re.sub(r'\\(?!["\\/bfnrtu])', '\\\\\\\\', response_text)
+            try:
+                result = _json.loads(fixed)
+            except Exception:
+                return {
+                    "id": yaml_id, "matched_benchmark": None,
+                    "coverage_score": 3, "redline_pass": True,
+                    "reason": f"JSON 解析失败: {response_text[:100]}",
+                    "error": "parse_failed",
+                }
+
+        return {
+            "id": yaml_id,
+            "matched_benchmark": result.get("matched_benchmark"),
+            "coverage_score": result.get("coverage_score", 3),
+            "redline_pass": result.get("redline_pass", True),
+            "reason": result.get("reason", ""),
+            "error": None,
+        }
+
+    except Exception as e:
+        logger.warning("LLM Judge failed for %s: %s", yaml_id, e)
+        return {
+            "id": yaml_id, "matched_benchmark": None,
+            "coverage_score": 3, "redline_pass": True,
+            "reason": f"调用失败: {e}",
+            "error": str(e),
+        }
+
+
+def run_llm_judge(
+    benchmark_path: Optional[str] = None,
+    staging_dir: Optional[Path] = None,
+    auxiliary_client=None,
+    verbose: bool = False,
+) -> Dict[str, Any]:
+    """对所有 staging/ 中的 full 文档做 LLM Judge 评分。
+
+    这是 Gate-Full 的可选第 5 步。评分结果仅供参考，不阻塞 commit。
+
+    Returns:
+        {
+            "total": int,
+            "results": [{id, matched_benchmark, coverage_score, redline_pass, reason}, ...],
+            "summary": {"avg_score": float, "redline_fails": int, "top_match": str},
+        }
+    """
+    benchmark_text = _load_benchmark_for_judge(benchmark_path)
+    if not benchmark_text:
+        return {"total": 0, "results": [], "summary": {}, "error": "No benchmark available"}
+
+    root = staging_dir or STAGING_DIR
+    if not root.exists():
+        return {"total": 0, "results": [], "summary": {}, "error": "staging/ not found"}
+
+    results = []
+    for yf in sorted(root.glob("*.yaml")):
+        try:
+            data = yaml.safe_load(yf.read_text(encoding="utf-8")) or {}
+            if not isinstance(data, dict) or data.get("type") != "full":
+                continue
+
+            if verbose:
+                print(f"  Judge: {yf.name} ...")
+
+            r = _run_llm_judge_for_doc(data, benchmark_text, auxiliary_client)
+            results.append(r)
+        except Exception as e:
+            logger.warning("Skipping %s: %s", yf.name, e)
+
+    # Summary
+    if results:
+        avg = sum(r["coverage_score"] for r in results) / len(results)
+        red_fails = sum(1 for r in results if not r["redline_pass"])
+        top = max(results, key=lambda r: r["coverage_score"])
+        summary = {"avg_score": round(avg, 1), "redline_fails": red_fails,
+                    "top_match": top["id"]}
+    else:
+        summary = {}
+
+    return {"total": len(results), "results": results, "summary": summary}
+
+
 # ── Schema export ───────────────────────────────────────────────────
 
 def export_schema(dry_run: bool = False) -> Dict[str, Any]:

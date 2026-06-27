@@ -84,6 +84,7 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     # gate-full
     gf_parser = sub.add_parser("gate-full", help="Phase 2: four-rigid checks on staging/")
     gf_parser.add_argument("--verbose", action="store_true", help="Print per-file results")
+    gf_parser.add_argument("--judge", action="store_true", help="Also run LLM Judge on full docs")
 
     # review (P0)
     rv_parser = sub.add_parser("review", help="Phase 2: review staging changes before commit")
@@ -102,6 +103,11 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     es_parser = sub.add_parser("export-schema", help="Phase 2: export JSON schema to core/_schema.yaml")
     es_parser.add_argument("--dry-run", action="store_true", help="Preview only")
 
+    # judge
+    jd_parser = sub.add_parser("judge", help="Phase 2: LLM Judge — score full docs against benchmark")
+    jd_parser.add_argument("--verbose", "-v", action="store_true", help="Per-file results")
+    jd_parser.add_argument("--benchmark", help="Benchmark JSON path (default: ~/.hermes/knowledge/self-opt/benchmark.json)")
+
     # run
     run_parser = sub.add_parser("run", help="Run full self-opt pipeline")
     run_parser.add_argument("--session-id", help="Single session to process")
@@ -111,7 +117,7 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     run_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
     for p in [harvest_parser, mine_parser, run_parser, distill_parser, mem_parser,
-              router_parser, extract_parser, dk_parser, gf_parser, rv_parser, cm_parser, ks_parser, es_parser]:
+              router_parser, extract_parser, dk_parser, gf_parser, rv_parser, cm_parser, ks_parser, es_parser, jd_parser]:
         p.set_defaults(func=cmd_self_opt)
     gate_parser.set_defaults(func=cmd_self_opt)
 
@@ -152,6 +158,8 @@ def handle_self_opt(args) -> int:
         return _handle_knowledge_stats(args)
     elif command == "export-schema":
         return _handle_export_schema(args)
+    elif command == "judge":
+        return _handle_judge(args)
     else:
         print(f"Unknown command: {command}")
         return 1
@@ -359,7 +367,7 @@ def _handle_distill_knowledge(args) -> int:
 
 
 def _handle_gate_full(args) -> int:
-    from hermes_self_opt.gate_full import run_gate_checks
+    from hermes_self_opt.gate_full import run_gate_checks, run_llm_judge
     try:
         result = run_gate_checks(verbose=args.verbose)
         print(f"Gate-Full: {result['passed']} passed, {result['failed']} failed")
@@ -371,6 +379,24 @@ def _handle_gate_full(args) -> int:
             print("\n✅ All checks passed — ready to commit")
         else:
             print("\n❌ Gate-Full failed — fix errors before commit")
+
+        # Optional LLM Judge
+        if args.judge:
+            print("\n── LLM Judge ──")
+            judge = run_llm_judge(verbose=args.verbose)
+            if judge.get("error"):
+                print(f"  ⚠️  {judge['error']}")
+            elif judge["results"]:
+                s = judge["summary"]
+                print(f"  {judge['total']} full docs scored")
+                print(f"  avg score: {s['avg_score']}/5  |  redline fails: {s['redline_fails']}  |  top: {s['top_match']}")
+                if args.verbose:
+                    for r in judge["results"]:
+                        status = "✅" if r["redline_pass"] else "❌"
+                        bm = r["matched_benchmark"] or "-"
+                        print(f"    {status} {r['id']}  score={r['coverage_score']}  bm={bm}  {r['reason'][:60]}")
+            else:
+                print("  No full docs in staging/")
         return 0 if result["all_passed"] else 1
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -477,6 +503,35 @@ def _handle_export_schema(args) -> int:
             print(f"Schema v{ver} — {result['lines']} lines → {path} (dry-run)")
         else:
             print(f"✅ Schema v{ver} exported → {path}")
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def _handle_judge(args) -> int:
+    from hermes_self_opt.gate_full import run_llm_judge
+    try:
+        judge = run_llm_judge(benchmark_path=args.benchmark, verbose=args.verbose)
+        if judge.get("error"):
+            print(f"⚠️  {judge['error']}")
+            return 1
+        if not judge["results"]:
+            print("No full docs found in staging/")
+            return 0
+
+        print(f"LLM Judge: {judge['total']} full docs scored\n")
+        s = judge["summary"]
+        print(f"  avg score:     {s['avg_score']}/5")
+        print(f"  redline fails: {s['redline_fails']}")
+        print(f"  top match:     {s['top_match']}")
+        print()
+        for r in judge["results"]:
+            status = "✅" if r["redline_pass"] else "❌"
+            bm = r["matched_benchmark"] or "-"
+            print(f"  {status} {r['id']}")
+            print(f"     score={r['coverage_score']}/5  bm={bm}")
+            print(f"     {r['reason']}")
         return 0
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
