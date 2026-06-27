@@ -56,12 +56,19 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     mem_parser.add_argument("--show", action="store_true", help="Show full Core Memory content")
 
     # router
-    router_parser = sub.add_parser("router", help="Skill router: build/query/stats")
+    router_parser = sub.add_parser("router", help="Skill router: build/query/stats/gap/rewrite/rollback")
     router_sub = router_parser.add_subparsers(dest="router_command")
     router_sub.add_parser("build", help="Rebuild FTS5 skill index")
     rq = router_sub.add_parser("query", help="Query the skill index")
     rq.add_argument("query_text", help="Search phrase")
     router_sub.add_parser("stats", help="Router statistics")
+    rg = router_sub.add_parser("gap", help="Check description gaps for a skill")
+    rg.add_argument("skill_name", help="Skill name to check")
+    rw = router_sub.add_parser("rewrite", help="Rewrite skill description (LLM)")
+    rw.add_argument("skill_name", help="Skill name to rewrite")
+    rw.add_argument("--dry-run", action="store_true", help="Preview only, don't write")
+    rb = router_sub.add_parser("rollback", help="Rollback skill to last backup")
+    rb.add_argument("skill_name", help="Skill name to rollback")
 
     # run
     run_parser = sub.add_parser("run", help="Run full self-opt pipeline")

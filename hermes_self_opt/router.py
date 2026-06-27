@@ -200,6 +200,200 @@ def stats() -> Dict[str, Any]:
     return {"indexed_skills": count, "total_events": events}
 
 
+REWRITE_PROMPT = """优化以下 skill 的描述，使其更准确地覆盖用户的真实说法。
+
+## 当前描述
+{description}
+
+## 用户最近的说法（未被当前描述覆盖）
+{gaps}
+
+## 要求
+- 保留原始描述的核心含义
+- 加入用户常用的关键词，让描述覆盖这些说法
+- 不要改变 skill 的职责范围
+- 新增关键词不超过 30 字
+- 只输出新的 description 文本，不要输出其他内容"""
+
+
+def find_description_gap(skill_name: str) -> Optional[str]:
+    """检查 skill 的 description 是否覆盖了用户常用说法。
+
+    Args:
+        skill_name: skill 名称
+
+    Returns:
+        gap 描述字符串（如 "未覆盖: AP连不上, 无线掉线"），无 gap 返回 None
+    """
+    if not ROUTER_DB.exists():
+        return None
+
+    conn = _get_conn()
+    # 获取当前 description
+    row = conn.execute(
+        "SELECT description FROM skill_index WHERE name = ? LIMIT 1", (skill_name,)
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    current_desc = (row["description"] or "").lower()
+    phrases = get_recent_phrases(skill_name, limit=10)
+
+    if not phrases:
+        return None
+
+    # 找出 description 没覆盖的说法
+    gaps = []
+    for phrase in phrases:
+        phrase_lower = phrase.lower()
+        # 检查是否在 description 里（允许部分匹配）
+        covered = any(word in current_desc for word in phrase_lower.split() if len(word) >= 2)
+        if not covered:
+            gaps.append(phrase)
+
+    if len(gaps) >= 2:
+        return ", ".join(gaps[:5])
+    return None
+
+
+def rewrite_description(
+    skill_name: str,
+    *,
+    auxiliary_client=None,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """用 LLM 重写 skill description，覆盖用户的真实说法。
+
+    Args:
+        skill_name: skill 名称
+        auxiliary_client: auxiliary LLM client
+        dry_run: True 只返回建议，不写入
+
+    Returns:
+        {"action": "rewrote"|"no_gap"|"skipped", "old": str, "new": str}
+    """
+    gap = find_description_gap(skill_name)
+    if not gap:
+        return {"action": "no_gap", "reason": "无需优化"}
+
+    # 获取当前描述和 skill 文件路径
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT description, path FROM skill_index WHERE name = ? LIMIT 1", (skill_name,)
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        return {"action": "skipped", "reason": "skill 不在索引中"}
+
+    old_desc = row["description"]
+    skill_path = Path(row["path"])
+
+    if not skill_path.exists():
+        return {"action": "skipped", "reason": "skill 文件不存在"}
+
+    # 调 LLM 重写
+    if auxiliary_client is None:
+        from agent.auxiliary_client import call_llm
+        auxiliary_client = call_llm
+
+    prompt = REWRITE_PROMPT.format(description=old_desc, gaps=gap)
+    messages = [{"role": "user", "content": prompt}]
+
+    try:
+        response = auxiliary_client(task="default", messages=messages)
+        if hasattr(response, "choices"):
+            new_desc = response.choices[0].message.content or ""
+        elif isinstance(response, dict):
+            new_desc = response.get("content", "")
+        else:
+            new_desc = str(response)
+    except Exception as e:
+        logger.warning("Rewrite LLM call failed: %s", e)
+        return {"action": "skipped", "reason": f"LLM 调用失败: {e}"}
+
+    new_desc = new_desc.strip()
+    if not new_desc or len(new_desc) < 10:
+        return {"action": "skipped", "reason": "LLM 返回空或太短"}
+
+    # 如果跟旧的一样就不改
+    if new_desc == old_desc:
+        return {"action": "no_gap", "reason": "新描述和旧描述相同"}
+
+    if dry_run:
+        return {"action": "dry_run", "old": old_desc, "new": new_desc}
+
+    # 备份旧版本
+    _backup_skill(skill_path)
+
+    # 写入新描述
+    content = skill_path.read_text(encoding="utf-8")
+    import re
+    new_content = re.sub(
+        rf"(^description\s*:\s*).+$",
+        rf"\1{new_desc}",
+        content,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    skill_path.write_text(new_content, encoding="utf-8")
+
+    logger.info("Rewrote description for %s: %s → %s", skill_name, old_desc[:60], new_desc[:60])
+    return {"action": "rewrote", "old": old_desc, "new": new_desc}
+
+
+def _backup_skill(skill_path: Path) -> None:
+    """备份 skill 文件到 router.db 中的 backup 表。"""
+    conn = _get_conn()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS skill_backups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT,
+            content TEXT,
+            timestamp TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    content = skill_path.read_text(encoding="utf-8")
+    conn.execute(
+        "INSERT INTO skill_backups (path, content) VALUES (?, ?)",
+        (str(skill_path), content),
+    )
+    conn.commit()
+    conn.close()
+
+
+def rollback_skill(skill_name: str) -> Dict[str, Any]:
+    """回滚 skill 到上一个备份版本。
+
+    Returns:
+        {"action": "rolled_back"|"no_backup", ...}
+    """
+    conn = _get_conn()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS skill_backups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT,
+            content TEXT,
+            timestamp TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    row = conn.execute(
+        "SELECT path, content FROM skill_backups WHERE path LIKE ? ORDER BY id DESC LIMIT 1",
+        (f"%{skill_name}%",),
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        return {"action": "no_backup", "reason": "无备份可回滚"}
+
+    skill_path = Path(row["path"])
+    skill_path.write_text(row["content"], encoding="utf-8")
+    logger.info("Rolled back skill: %s", skill_name)
+    return {"action": "rolled_back", "path": str(skill_path)}
+
+
 def _extract_frontmatter(content: str, key: str) -> str:
     """从 YAML frontmatter 中提取字段值。"""
     # 简单解析：查找 "key: value" 行
