@@ -13,6 +13,7 @@ from hermes_self_opt.harvest import harvest, harvest_recent
 from hermes_self_opt.mine import mine
 from hermes_self_opt.gate import gate_memory, gate_skill
 from hermes_self_opt.writer import write_memory, write_skill, write_log
+from hermes_self_opt.filter import looks_like_troubleshooting
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 def run_session(
     session_id: str,
     *,
+    dialog: str = "",
     auxiliary_client=None,
     benchmark_path: Optional[str] = None,
     overwrite_skill: bool = False,
@@ -28,6 +30,7 @@ def run_session(
 
     Args:
         session_id: Hermes session ID
+        dialog: 预 harvest 的对话文本（可选，不传则内部 harvest）
         auxiliary_client: auxiliary LLM client（可选）
         benchmark_path: Benchmark 题库路径（可选）
         overwrite_skill: 是否覆盖已有同名 skill
@@ -40,14 +43,15 @@ def run_session(
         "steps": {},
     }
 
-    # Step 1: Harvest
-    logger.info("[%s] Harvesting...", session_id)
-    try:
-        dialog = harvest(session_id)
-    except Exception as e:
-        logger.error("[%s] Harvest failed: %s", session_id, e)
-        result["error"] = f"Harvest failed: {e}"
-        return result
+    # Step 1: Harvest（如果外部没传 dialog 就自己收割）
+    if not dialog:
+        logger.info("[%s] Harvesting...", session_id)
+        try:
+            dialog = harvest(session_id)
+        except Exception as e:
+            logger.error("[%s] Harvest failed: %s", session_id, e)
+            result["error"] = f"Harvest failed: {e}"
+            return result
     result["steps"]["harvest"] = {"dialog_chars": len(dialog)}
 
     if not dialog.strip():
@@ -142,13 +146,31 @@ def run(
     logger.info("Found %d sessions in the last %d day(s)", len(sessions), days)
 
     results = []
+    skipped = 0
     for s in sessions:
+        sid = s["session_id"]
+
+        # === Pre-filter: skip sessions unlikely to be troubleshooting ===
+        try:
+            dialog = harvest(sid)
+        except Exception:
+            skipped += 1
+            continue
+
+        if not looks_like_troubleshooting(dialog):
+            skipped += 1
+            logger.debug("[%s] Skipped — not troubleshooting", sid)
+            continue
+
         result = run_session(
-            s["session_id"],
+            sid,
+            dialog=dialog,
             auxiliary_client=auxiliary_client,
             benchmark_path=benchmark_path,
             overwrite_skill=overwrite_skill,
         )
         results.append(result)
+
+    logger.info("Processed %d troubleshooting sessions (%d skipped)", len(results), skipped)
 
     return results
