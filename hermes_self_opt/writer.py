@@ -3,7 +3,7 @@ writer.py — Step 4: 将验证通过的内容写入目标位置。
 
 职责：
   - 写入 Memory 到 ~/.hermes/memories/MEMORY.md
-  - 写入 Skill 到 ~/.hermes/skills/self-opt/<name>/SKILL.md
+  - 写入 Skill 到 self-opt/skills/self-opt/<name>/SKILL.md
   - 记录所有操作到 ~/.hermes/self-opt/logs/
 """
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Memory 文件路径
 MEMORY_FILE = Path.home() / ".hermes" / "memories" / "MEMORY.md"
 # Skill 写入目录
-SKILL_DIR = Path.home() / ".hermes" / "skills" / "self-opt"
+SKILL_DIR = Path.home() / "script" / "hermes-self-opt" / "skills" / "self-opt"
 # Log 目录
 LOG_DIR = Path.home() / ".hermes" / "self-opt" / "logs"
 # 变动日志（skill/knowledge 变更记录）

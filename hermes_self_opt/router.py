@@ -27,8 +27,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+from hermes_self_opt import SKILLS_ROOT
+
 ROUTER_DB = Path.home() / ".hermes" / "self-opt" / "router.db"
-SKILLS_ROOT = Path.home() / ".hermes" / "skills"
 
 # FTS5 匹配阈值——分数低于此值认为不匹配，丢给 LLM
 MIN_SCORE = 0.2

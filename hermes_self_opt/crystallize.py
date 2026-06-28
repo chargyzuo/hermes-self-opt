@@ -134,9 +134,11 @@ def _format_session_summaries(sessions: List[Dict[str, Any]]) -> str:
     return "\n---\n".join(parts)
 
 
+from hermes_self_opt import SKILLS_ROOT
+
 def _get_existing_skill_list() -> str:
     """获取已有 skill 列表（名称 + 描述），供 LLM 去重参考。"""
-    skills_dir = Path.home() / ".hermes" / "skills"
+    skills_dir = SKILLS_ROOT
     if not skills_dir.exists():
         return "无已有 skill"
 
@@ -304,7 +306,7 @@ def crystallize(
       2. 调 LLM 跨 session 检测模式 → 生成 SKILL.md
       3. 去重检查（对比已有 skill + Router 匹配）
       4. Gate-Lite 验证
-      5. 写入 ~/.hermes/skills/self-opt/
+      5. 写入 self-opt/skills/self-opt/
 
     Args:
         days: 回溯天数

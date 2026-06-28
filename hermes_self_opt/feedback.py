@@ -160,14 +160,16 @@ def _move_correction(correction_id: str, from_dir: Path, to_dir: Path) -> bool:
     return True
 
 
+from hermes_self_opt import SKILLS_ROOT
+
 def _find_skill_file(skill_name: str) -> Optional[Path]:
     """查找 skill 文件路径。
 
     支持两种位置：
-      1. ~/.hermes/skills/**/<name>/SKILL.md
-      2. ~/.hermes/skills/self-opt/<name>/SKILL.md
+      1. skills/**/<name>/SKILL.md
+      2. skills/self-opt/<name>/SKILL.md
     """
-    skills_root = Path.home() / ".hermes" / "skills"
+    skills_root = SKILLS_ROOT
     if not skills_root.exists():
         return None
 

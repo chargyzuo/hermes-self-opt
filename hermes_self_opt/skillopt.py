@@ -155,12 +155,13 @@ def _format_benchmark(benchmark: Dict[str, Any]) -> str:
 # ──────────────────────────────────────────────
 
 def _find_skill_file(skill_name: str) -> Optional[Path]:
-    """在 ~/.hermes/skills/ 下查找 skill 的 SKILL.md。
+    """在 self-opt/skills/ 下查找 skill 的 SKILL.md。
 
     按 frontmatter name 或目录名匹配。
     """
     import yaml
-    skills_root = Path.home() / ".hermes" / "skills"
+    from hermes_self_opt import SKILLS_ROOT
+    skills_root = SKILLS_ROOT
     for skill_md in skills_root.rglob("SKILL.md"):
         content = skill_md.read_text(encoding="utf-8")
         # 尝试 frontmatter name

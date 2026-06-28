@@ -1,0 +1,9 @@
+{
+  "last_report_path": "/Users/bytedance/.hermes/logs/curator/20260625-114644",
+  "last_run_at": "2026-06-25T11:46:44.979469+00:00",
+  "last_run_duration_seconds": 366.953301,
+  "last_run_summary": "auto: no changes; llm: ## Consolidation Pass Summary\n\n**11 skills archived into 6 umbrella targets across 6 prefix/domain clusters.** No prunings — every archived skill had its content absorbed into an umbrella.\n\n### Clusters processed\n\n1. **github-* (5→1)** — Cr…\narchived 11 skill(s):\n  • cli-input-troubleshooting → macos-system-configuration\n  • hermes-agent-skill-authoring → hermes-agent\n  • hermes-configuration → hermes-agent\n  • huawei-switch-diagnostics → huawei-switch-auth-troubleshooting\n  • playwright-web-automation → playwright-browser\n  • vocab-audio → english-learning\n  • github-auth — pruned (stale)\n  • github-code-review — pruned (stale)\n  • github-issues — pruned (stale)\n  • github-pr-workflow — pruned (stale)\n  … and 1 more\nfull report: hermes curator status\nkeep an umbrella stable: hermes curator pin english-learning",
+  "last_run_summary_shown_at": "2026-06-25T11:46:44.979469+00:00",
+  "paused": false,
+  "run_count": 2
+}
