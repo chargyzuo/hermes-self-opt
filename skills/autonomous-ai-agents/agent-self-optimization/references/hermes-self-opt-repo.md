@@ -34,6 +34,9 @@ skills/                   # 157 SKILL.md — migrated from ~/.hermes/skills/ (20
 ├── software-development/ # 软件开发 skills
 └── ...                   # 53 个分类目录
 
+scripts/                  # Hermes cron 脚本（2026-06-29）
+└── sync-memory-from-core.py  # Core Memory → MEMORY.md 同步（dc>=5 或 dc==0 过滤）
+
 ~/.hermes/self-opt/
 ├── logs/                 # Per-run JSON logs
 ├── router.db             # Skill index + match events + backups
@@ -152,9 +155,10 @@ Absolute path: `/Users/bytedance/Library/Mobile Documents/com~apple~CloudDocs/�
 ## Cron Schedule
 
 ```bash
-03:00 → self-opt-nightly   (Harvest → Mine → Gate → Daily Memory)
-04:00 → self-opt-distill   (Daily → Core Memory 蒸馏)
-05:00 → self-opt-router    (Rebuild index + gap scan)
-# ⚠️ MISSING: knowledge-pipeline cron for normal/ → core/ auto-rebuild
-#    Workaround: hermes self-opt run-pipeline -y (manual)
+03:00 → self-opt-nightly           (Harvest → Mine → Gate → Daily Memory)
+04:00 → self-opt-distill           (Daily → Core Memory 蒸馏 + cleanup_core_memory)
+05:00 → self-opt-router            (Rebuild index + gap scan)
+06:00 → self-opt-daily-bugfix      (读日志 → 找 bug → 修 → git commit)
+*/10  → memory-core-sync-watchdog  (core YAML → pre-MEMORY.md → MEMORY.md, no_agent)
+*/30  → knowledge-pipeline-watchdog (normal/ 变化检测 → 增量 knowledge-build)
 ```

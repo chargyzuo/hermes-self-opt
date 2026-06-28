@@ -268,6 +268,10 @@ record_match() → record what user said + which skill matched
 04:00 → self-opt-distill           (Phase 3: Daily → Core Memory 蒸馏 + cleanup_core_memory 去重冲突解决)
 05:00 → self-opt-router            (Phase 4: Rebuild index + gap scan)
 06:00 → self-opt-daily-bugfix      🆕 每日 Bug 修复: 读日志 → 找 bug → 修 → 记录 Obsidian → git commit
+*/10  → memory-core-sync-watchdog  🆕 Core Memory → MEMORY.md 自动同步
+        └─ 脚本: ~/.hermes/scripts/sync-memory-from-core.py (no_agent=True)
+        └─ 增量哈希检测，core/*.yaml 变动时编译 pre-MEMORY.md 并同步 MEMORY.md
+        └─ 无变动时完全 silent（空 stdout → 不交付）
 */30  → knowledge-pipeline-watchdog (Phase 2: normal/ 变化检测 → 增量 extract→distill→gate→commit)
         └─ 脚本: ~/.hermes/scripts/knowledge-pipeline-watchdog.py
         └─ 状态: ~/.hermes/knowledge/self-opt/.normal_hashes.json
@@ -582,6 +586,7 @@ Generate `id` from Chinese title → kebab-case English:
 11. **Crystallization 门槛**: 最少 3 个排障 session 才触发新 skill 自动生成。单次 LLM 调用处理所有 session。两重去重：文件名 + Router 语义重叠（threshold=0.6）
 12. **Core Memory v2.0 自动优化**: upsert_entry 4 层去重 + cleanup_core_memory 全局冲突解决，集成到 distill cron（commit `c3ceb3b` / `eb378eb`）。每条记录含 duplicate_count 权重、added/updated 日期。生产数据 71→33 条（清理后），每天蒸馏后自动维护。
 13. **Skills 目录迁移到 self-opt**: 所有 157 个 skill 从 `~/.hermes/skills/` 迁移到 `~/script/hermes-self-opt/skills/`。Hermes 通过软链接 `~/.hermes/skills → self-opt/skills` 保持兼容。self-opt 框架通过 `__init__.py::SKILLS_ROOT` 统一引用 canonical 路径。writer.py 写入 `self-opt/skills/self-opt/`。Phase 3/4（optimize、crystallize、router）现在扫描全部 157 个 skill，不再仅限 self-opt 生成的部分（commit `c78d626`）。
+14. **Legacy MEMORY.md 同步**: core/*.yaml 不自动注入 Hermes 会话（Hermes 只读 MEMORY.md/USER.md）。通过 sync-memory-from-core.py watchdog（每10分钟，no_agent）编译 YAML entry → 段落压缩 → 写入 pre-MEMORY.md 并同步 MEMORY.md。**过滤规则（2026-06-29）**: duplicate_count >= 5 或 duplicate_count == 0（人工静态 entry）才写入；按 dc 降序排列。USER.md 保持弃用标记。新增 skill 统一归入 self-opt/skills/。
 
 ## Handover & Pending Items
 
