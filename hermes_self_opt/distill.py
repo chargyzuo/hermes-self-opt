@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from hermes_self_opt.core_memory import save_entry
+from hermes_self_opt.core_memory import save_entry, cleanup_core_memory
 from hermes_self_opt.writer import DAILY_DIR, write_log
 
 logger = logging.getLogger(__name__)
@@ -115,6 +115,10 @@ def distill_daily(
     # 按类别写入 Core Memory
     count = _save_distilled(result)
     result = {"distilled_count": count, "daily_chars": daily_chars, "path": str(daily_file), "reason": "ok"}
+
+    # 蒸馏后全局清理：去重 + 冲突解决
+    cleanup_stats = cleanup_core_memory()
+    result["cleanup"] = cleanup_stats
 
     # 写入运行日志
     write_log({"phase": "distill", "date": date_str, "daily_chars": daily_chars,
