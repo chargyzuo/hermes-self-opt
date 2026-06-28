@@ -1,7 +1,7 @@
 ---
 name: agent-self-optimization
 description: "Harvest sessions, mine for patterns, distill memory, and route skills — the complete Agent Self-Optimization pipeline for Hermes."
-version: 1.8.0
+version: 1.9.0
 tags: [self-opt, harvest, mine, gate, memory, distillation, router, knowledge, phase2, phase3, phase4, skillopt, crystallize, feedback]
 ---
 
@@ -201,6 +201,15 @@ write_daily(daily/<date>.md) → accumulate per-session memory fragments
 ```
 
 **Key decision**: MEMORY.md is NOT the primary store anymore. New memory goes to `daily/<date>.md`, distilled to `core/*.yaml`. Old files preserved as reference.
+
+**PITFALL — core YAML does NOT auto-inject into sessions**: Hermes reads `~/.hermes/memories/MEMORY.md` and `USER.md` into every session's system prompt. The `core/*.yaml` files (facts/preferences/environment/patterns) are the self-opt structured store and are NOT auto-injected — they only serve the `hermes self-opt distill` pipeline and `hermes self-opt memory --show` CLI. If you replace MEMORY.md content with a deprecation notice, the agent in the NEXT session will have ZERO memory context. 
+
+**Mitigation options**:
+- Keep a compiled summary in MEMORY.md (auto-generated from core YAML by cron before each session)
+- Load core YAML explicitly at session start via a startup hook
+- Wait for self-opt to implement auto-injection (not yet implemented)
+
+**Legacy migration**: For one-time migration of traditional MEMORY.md → core YAML, see `references/legacy-memory-migration.md`.
 
 ### Phase 4: User Feedback Loop (Capture → Queue → Process) ✅ IMPLEMENTED (2026-06-28)
 
@@ -627,6 +636,7 @@ Generate `id` from Chinese title → kebab-case English:
 - `references/skillopt-architecture.md` — Phase 3 SkillOpt 优化循环架构（Rollout→Reflect→Edit→Gate-Lite）
 - `references/router-accuracy-diagnostic.md` — Router 准确率诊断方法：benchmark 驱动 miss 分类 + 根因分析
 - `references/phase2-testing-workflow.md` — Phase 2 端到端测试工作流（飞书文档 → normal/ → knowledge-build）
+- `references/legacy-memory-migration.md` — 传统 MEMORY.md → Core YAML 一次性迁移流程（2026-06-29 执行）
 
 ## Related Skills
 

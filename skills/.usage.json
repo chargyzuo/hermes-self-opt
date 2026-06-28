@@ -29,14 +29,14 @@
     "archived_at": null,
     "created_at": "2026-06-27T08:21:30.056316+00:00",
     "created_by": "agent",
-    "last_patched_at": "2026-06-28T18:16:15.976728+00:00",
-    "last_used_at": "2026-06-28T18:16:23.778415+00:00",
-    "last_viewed_at": "2026-06-28T18:16:23.773311+00:00",
-    "patch_count": 122,
+    "last_patched_at": "2026-06-28T18:55:34.439496+00:00",
+    "last_used_at": "2026-06-28T18:54:43.478434+00:00",
+    "last_viewed_at": "2026-06-28T18:54:43.476391+00:00",
+    "patch_count": 126,
     "pinned": false,
     "state": "active",
-    "use_count": 67,
-    "view_count": 66
+    "use_count": 69,
+    "view_count": 68
   },
   "airtable": {
     "archived_at": null,
@@ -576,13 +576,13 @@
     "created_at": "2026-06-18T11:41:06.822662+00:00",
     "created_by": null,
     "last_patched_at": "2026-06-25T11:50:42.364826+00:00",
-    "last_used_at": "2026-06-28T18:07:39.804526+00:00",
-    "last_viewed_at": "2026-06-28T18:07:39.801334+00:00",
+    "last_used_at": "2026-06-28T19:00:21.738584+00:00",
+    "last_viewed_at": "2026-06-28T18:57:03.019033+00:00",
     "patch_count": 3,
     "pinned": false,
     "state": "active",
-    "use_count": 44,
-    "view_count": 36
+    "use_count": 46,
+    "view_count": 37
   },
   "hermes-dashboard-launch": {
     "archived_at": null,
