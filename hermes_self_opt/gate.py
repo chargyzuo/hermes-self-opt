@@ -230,8 +230,49 @@ def gate_skill(
         logger.warning("Gate LLM call failed: %s", e)
         return {"decision": "pass", "coverage_score": 3, "reason": f"LLM 调用失败，基本检查已通过: {e}"}
 
-    try:
-        result = json.loads(response_text)
+    # 尝试解析 JSON，支持从 markdown 代码块中提取
+    def _extract_json(text: str) -> Optional[Dict[str, Any]]:
+        """尝试多种策略提取 JSON：纯 JSON → markdown 代码块 → 常见转义修复。"""
+        # 策略 1: 直接解析
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        import re as _re
+
+        # 策略 2: 从 ```json ... ``` 代码块中提取
+        m = _re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, _re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+
+        # 策略 3: 从最外层的 { ... } 中提取（支持简单嵌套）
+        m = _re.search(r'\{[^{}]*\}', text, _re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                pass
+        # 再试匹配完整 JSON 对象（含嵌套）
+        m = _re.search(r'\{.*\}', text, _re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                pass
+
+        # 策略 4: 修复转义后重试
+        fixed = _re.sub(r'\\(?!["\\/bfnrtu])', '\\\\', text)
+        try:
+            return json.loads(fixed)
+        except json.JSONDecodeError:
+            return None
+
+    result = _extract_json(response_text)
+    if result is not None:
         coverage = result.get("coverage_score", 0)
         redline = result.get("redline_pass", True)
         reason = result.get("reason", "")
@@ -242,23 +283,9 @@ def gate_skill(
             return {"decision": "fail", "coverage_score": coverage, "reason": f"必要步骤覆盖不足: {reason}"}
 
         return {"decision": "pass", "coverage_score": coverage, "reason": reason}
-    except (json.JSONDecodeError, KeyError) as e:
-        logger.warning("Gate LLM response parse failed: %s", e)
-        # 尝试修复常见的 JSON 转义问题
-        import re as _re
-        fixed = _re.sub(r'\\(?!["\\/bfnrtu])', '\\\\', response_text)
-        try:
-            result = json.loads(fixed)
-            coverage = result.get("coverage_score", 3)
-            redline = result.get("redline_pass", True)
-            reason = result.get("reason", "repaired escape")
-            if not redline:
-                return {"decision": "fail", "coverage_score": coverage, "reason": f"红线检查失败: {reason}"}
-            if coverage < 2:
-                return {"decision": "fail", "coverage_score": coverage, "reason": f"必要步骤覆盖不足: {reason}"}
-            return {"decision": "pass", "coverage_score": coverage, "reason": reason}
-        except (json.JSONDecodeError, KeyError):
-            return {"decision": "pass", "coverage_score": 3, "reason": f"评分解析失败，默认通过: {e}"}
+
+    logger.warning("Gate LLM response parse failed after all strategies: %s", response_text[:200])
+    return {"decision": "pass", "coverage_score": 3, "reason": "评分解析失败（JSON/markdown/escape 均不可解析），默认通过"}
 
 
 def gate_memory(memory_chunk: str) -> Dict[str, Any]:
