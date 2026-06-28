@@ -150,6 +150,19 @@ metadata:
 - [文档标题](飞书URL)
 - [[关联笔记名称]]
 
+## 文档类型选择
+
+本 skill 侧重**网络设备类**排障（交换机/AP/防火墙等），包含厂商命令识别、拓扑图、配置摘录等专属章节。
+
+以下场景请改用 `write-troubleshooting-note` skill（更轻量的模板）：
+- **客户端/软件类问题**：macOS、Node.js、VPN 客户端、浏览器等非网络基础设施故障
+- **来源为飞书聊天记录**：从合并转发消息或群聊中提取排障过程
+- **问题未解决**：只有排查链没有最终方案的情况
+
+```
+skill_view(name="write-troubleshooting-note")
+```
+
 ## 进阶：YAML 知识蒸馏管线
 
 当 troubleshooting 文档积累到一定规模后，可进一步蒸馏为结构化 YAML 知识库

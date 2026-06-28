@@ -572,6 +572,7 @@ Generate `id` from Chinese title → kebab-case English:
 10. **SkillOpt 训练循环**: Rollout→Reflect→Edit→Gate-Lite 完整闭环（skillopt.py 578 行）。每次 Edit 前自动备份 `.bak`，最终 Gate-Lite 终验不倒退才写入
 11. **Crystallization 门槛**: 最少 3 个排障 session 才触发新 skill 自动生成。单次 LLM 调用处理所有 session。两重去重：文件名 + Router 语义重叠（threshold=0.6）
 12. **Core Memory v2.0 自动优化**: upsert_entry 4 层去重 + cleanup_core_memory 全局冲突解决，集成到 distill cron（commit `c3ceb3b` / `eb378eb`）。每条记录含 duplicate_count 权重、added/updated 日期。生产数据 71→33 条（清理后），每天蒸馏后自动维护。
+13. **Skills 目录迁移到 self-opt**: 所有 157 个 skill 从 `~/.hermes/skills/` 迁移到 `~/script/hermes-self-opt/skills/`。Hermes 通过软链接 `~/.hermes/skills → self-opt/skills` 保持兼容。self-opt 框架通过 `__init__.py::SKILLS_ROOT` 统一引用 canonical 路径。writer.py 写入 `self-opt/skills/self-opt/`。Phase 3/4（optimize、crystallize、router）现在扫描全部 157 个 skill，不再仅限 self-opt 生成的部分（commit `c78d626`）。
 
 ## Handover & Pending Items
 
@@ -585,6 +586,7 @@ Generate `id` from Chinese title → kebab-case English:
 | **Gate-Lite LLM Judge 空 JSON** | `f11a687` / `2ea4257` — gate.py: 4-strategy `_extract_json()` 支持 markdown 代码块、inline JSON、嵌套 JSON 提取。原 `try/except json.loads + 转义修复` 无法处理 LLM 常见的 markdown code block 格式导致所有 skill 降级 coverage=3。新策略：直接解析 → markdown 代码块 → inline {} → 转义修复。8 项 ad-hoc 测试全部通过。 |
 | **Core Memory v2.0 自动优化** | `c3ceb3b` / `eb378eb` — core_memory.py: upsert_entry 4 层去重（exact→similar→contradiction→new）+ cleanup_core_memory 全局冲突解决 + duplicate_count 权重字段 + added/updated 日期追踪。集成到 self-opt-distill cron。生产数据 71→33 条，20/20 ad-hoc 验证通过。 |
 | **self-opt-daily-bugfix cron** | `e83481499353` — 每天 06:00 自动读日志、找 bug、修、记录 Obsidian 更新记录、git commit。模型 deepseek-v4-flash。技能: self-opt-daily-bugfix。 |
+| **Skills 目录迁移** | `c78d626` — 157 个 skill 从 `~/.hermes/skills/` 迁到 `self-opt/skills/`，软链接保持 Hermes 兼容。`__init__.py::SKILLS_ROOT` 统一路径。Phase 3/4 现在扫描全部 skill。 |
 
 ### 确认不做
 

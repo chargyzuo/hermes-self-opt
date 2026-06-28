@@ -22,6 +22,18 @@ hermes_self_opt/
 ├── committer.py          # staging→core atomic move + _index.yaml (330 lines)
 └── reviewer.py           # P0: review gate — scan, approve, hash-detect (287 lines)
 
+skills/                   # 157 SKILL.md — migrated from ~/.hermes/skills/ (2026-06-29)
+├── apple/                # macOS/iOS integration skills
+├── autonomous-ai-agents/ # agent-self-optimization, hermes-agent, etc.
+├── creative/             # Design, art, video skills
+├── devops/               # ELK, MCP, troubleshooting
+├── feishu/               # 飞书全系列 skills (lark-*)
+├── network/              # 网络排障 skills (华为/NetBox/pcap)
+├── research/             # 研究 skills
+├── self-opt/             # 自动生成的 troubleshooting skills (36 SKILL.md)
+├── software-development/ # 软件开发 skills
+└── ...                   # 53 个分类目录
+
 ~/.hermes/self-opt/
 ├── logs/                 # Per-run JSON logs
 ├── router.db             # Skill index + match events + backups
