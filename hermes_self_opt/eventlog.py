@@ -2,7 +2,7 @@
 eventlog.py — 统一查看 self-opt 所有事件日志（Phase 4 补充模块）。
 
 数据源：
-  - ~/.hermes/self-opt/change.log          skill/knowledge 变动
+  - ~/.hermes/self-opt/change.log          skill/knowledge/memory 变动
   - ~/.hermes/self-opt/logs/*.json          Phase 1/3/4 运行日志
   - ~/.hermes/knowledge/self-opt/pipeline_watchdog.log  Phase 2 watchdog
 """
@@ -156,9 +156,9 @@ def query(
     """
     all_events: List[Dict[str, Any]] = []
 
-    if target in ("skill", "knowledge", "all"):
+    if target in ("skill", "knowledge", "memory", "all"):
         changes = _parse_change_log(days)
-        if target in ("skill", "knowledge"):
+        if target in ("skill", "knowledge", "memory"):
             changes = [e for e in changes if e["target"] == target]
         for e in changes:
             e["source"] = "change.log"
@@ -203,6 +203,8 @@ def format_output(data: Dict[str, Any]) -> str:
             icon = "📋"
         elif target == "knowledge":
             icon = "📚"
+        elif target == "memory":
+            icon = "🧠"
         else:
             icon = "⏱"
 

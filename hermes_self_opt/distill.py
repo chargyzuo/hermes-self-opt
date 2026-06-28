@@ -15,8 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from hermes_self_opt.core_memory import save_entry, cleanup_core_memory
-from hermes_self_opt.writer import DAILY_DIR, write_log
+from hermes_self_opt.core_memory import save_entry, cleanup_core_memory, CORE_DIR, CATEGORIES, _read_yaml
+from hermes_self_opt.writer import DAILY_DIR, write_log, write_change_log
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +134,7 @@ def distill_daily(
 
 
 def _save_distilled(result: dict) -> int:
-    """把蒸馏结果写入 Core Memory。"""
+    """把蒸馏结果写入 Core Memory，并记录变动到 change.log。"""
     categories = {
         "facts": "facts",
         "preferences": "preferences",
@@ -150,8 +150,20 @@ def _save_distilled(result: dict) -> int:
             content = item.get("content", "") if isinstance(item, dict) else str(item)
             confidence = item.get("confidence", "medium") if isinstance(item, dict) else "medium"
             if content.strip():
+                # 记录写入前条目数
+                file_path = CORE_DIR / CATEGORIES[category]
+                before_count = len(_read_yaml(file_path))
                 eid = save_entry(category, content, confidence)
                 if eid:
+                    # 判断是新建还是更新
+                    after_count = len(_read_yaml(file_path))
+                    action = "created" if after_count > before_count else "updated"
+                    write_change_log(
+                        "memory", action, eid,
+                        source="cron",
+                        path=str(file_path),
+                        detail=f"category={category}",
+                    )
                     count += 1
     return count
 

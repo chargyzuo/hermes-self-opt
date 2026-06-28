@@ -174,8 +174,8 @@ def build_self_opt_parser(subparsers, *, cmd_self_opt: Callable) -> None:
     fb_reject.add_argument("--reason", default="", help="Rejection reason")
 
     # eventlog
-    el_parser = sub.add_parser("eventlog", help="View all self-opt events (skill/knowledge/cron changes)")
-    el_parser.add_argument("--type", default="all", choices=["all", "skill", "knowledge", "cron"],
+    el_parser = sub.add_parser("eventlog", help="View all self-opt events (skill/knowledge/memory/cron changes)")
+    el_parser.add_argument("--type", default="all", choices=["all", "skill", "knowledge", "memory", "cron"],
                            help="Filter by event type (default: all)")
     el_parser.add_argument("--days", type=int, default=7, help="Days to look back (default: 7)")
     el_parser.add_argument("--limit", type=int, default=50, help="Max events to show (default: 50)")

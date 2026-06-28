@@ -69,10 +69,11 @@ hermes self-opt router monitor               # Trigger rate monitoring (last 7 d
 hermes self-opt router monitor --skill <name> # Per-skill detail
 hermes self-opt router monitor --days 30 --json # Extended window + JSON output
 
-# Phase 4: Event Log ✅ IMPLEMENTED (2026-06-28)
-hermes self-opt eventlog                          # View all self-opt events (skills/knowledge/cron runs)
+# Phase 4: Event Log ✅ IMPLEMENTED (2026-06-28, memory support 2026-06-29)
+hermes self-opt eventlog                          # View all self-opt events (skills/knowledge/memory/cron runs)
 hermes self-opt eventlog --type skill             # Only skill changes
 hermes self-opt eventlog --type knowledge         # Only knowledge commits
+hermes self-opt eventlog --type memory           # Only memory changes
 hermes self-opt eventlog --type cron              # Only cron runs
 hermes self-opt eventlog --days 30                # Extended window (default: 7)
 hermes self-opt eventlog --limit 50               # Max events (default: 50)
@@ -296,12 +297,13 @@ is not optional — if it ran, it must be traceable.
 
 Per-line format: `UTC_timestamp | target | action | name | source=... | path=... | detail=...`
 
-- **target**: `skill` or `knowledge`
+- **target**: `skill` / `knowledge` / `memory`
 - **action**: `created`, `updated`, `committed`, `skipped`
 - **source**: session_id or `pipeline` or `cron`
 
 Writers: `writer.py::write_change_log()` (skill changes via `write_skill()`),
-`committer.py::commit_to_core()` (knowledge commits).
+`committer.py::commit_to_core()` (knowledge commits),
+`distill.py::_save_distilled()` (memory changes).
 
 ### Per-phase JSON logs
 

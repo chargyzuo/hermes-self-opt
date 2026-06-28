@@ -193,7 +193,7 @@ def write_change_log(
     """向统一变动日志追加一条记录。
 
     Args:
-        target: 目标类型 — "skill" 或 "knowledge"
+        target: 目标类型 — "skill" / "knowledge" / "memory"
         action: 动作 — "created", "updated", "committed", "skipped"
         name: skill 名或 entry id
         path: 文件路径
