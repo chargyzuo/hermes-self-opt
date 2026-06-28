@@ -192,15 +192,20 @@ def upsert_entry(
         "confidence": confidence,
         "added": today,
         "updated": today,
+        "duplicate_count": 1,
     }
 
     for i, existing in enumerate(entries):
         existing_content = existing.get("content", "").strip()
 
-        # 1. 完全一致 → 跳过
+        # 1. 完全一致 → 跳过（但记录重复次数）
         if existing_content == new_entry["content"]:
-            logger.debug("Duplicate (exact): %s", content[:40])
-            return None
+            existing.setdefault("duplicate_count", 1)
+            existing["duplicate_count"] = existing.get("duplicate_count", 1) + 1
+            existing["updated"] = today
+            _write_yaml(file_path, entries)
+            logger.debug("Duplicate (exact) count=%d: %s", existing["duplicate_count"], content[:40])
+            return existing.get("id")
 
         sim = _text_similarity(existing_content, new_entry["content"])
 
@@ -213,8 +218,10 @@ def upsert_entry(
                 entries[i].get("confidence", "medium"),
                 key=lambda c: _confidence_score(c),
             )
+            entries[i].setdefault("duplicate_count", 1)
+            entries[i]["duplicate_count"] = entries[i].get("duplicate_count", 1) + 1
             _write_yaml(file_path, entries)
-            logger.info("Updated (similar %.2f): %s", sim, existing.get("id", ""))
+            logger.info("Updated (similar %.2f, count=%d): %s", sim, entries[i]["duplicate_count"], existing.get("id", ""))
             return existing.get("id")
 
         # 3. 同主题 + 矛盾 → 解决
@@ -265,10 +272,16 @@ def cleanup_core_memory() -> Dict[str, int]:
         entries = _read_yaml(file_path)
         total_before += len(entries)
         if len(entries) < 2:
+            # 即使只有 1 条也补全 duplicate_count
+            if len(entries) == 1:
+                entries[0].setdefault("duplicate_count", 1)
+                _write_yaml(file_path, entries)
             continue
 
         kept = []
         for i, entry in enumerate(entries):
+            # 向后兼容：补全 duplicate_count
+            entry.setdefault("duplicate_count", 1)
             content_i = entry.get("content", "").strip()
             should_skip = False
 
@@ -281,13 +294,18 @@ def cleanup_core_memory() -> Dict[str, int]:
                     # 保留置信度更高的
                     conf_i = _confidence_score(entry.get("confidence", "medium"))
                     conf_j = _confidence_score(other.get("confidence", "medium"))
+                    # 累加重复次数
+                    entry_count = entry.get("duplicate_count", 1)
+                    other_count = other.get("duplicate_count", 1)
                     if conf_i > conf_j:
                         # 用 entry 替换 other
                         entry["id"] = other["id"]
                         entry["added"] = other.get("added", entry.get("added", ""))
+                        entry["duplicate_count"] = entry_count + other_count
                         kept[j] = entry
                     else:
                         kept[j]["updated"] = datetime.now().strftime("%Y-%m-%d")
+                        kept[j]["duplicate_count"] = kept[j].get("duplicate_count", 1) + entry_count
                     merged += 1
                     should_skip = True
                     break
