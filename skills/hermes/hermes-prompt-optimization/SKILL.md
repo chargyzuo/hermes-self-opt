@@ -94,6 +94,55 @@ os.environ['HERMES_PLATFORM'] = 'cli'  # or 'telegram', 'discord', etc.
 This is the #1 gotcha — the `build_skills_system_prompt` cache key includes
 the resolved platform, and without it the CLI disabled list is silently ignored.
 
+### Stale Disabled Entries Audit
+
+When skills are renamed or removed from disk, their old names stay in the
+`platform_disabled` list and become dead weight — they waste no tokens but
+create a false sense of optimization. Meanwhile, the renamed skill reappears
+as *active*. This is a silent regression.
+
+**Cross-reference check** — compare the disabled list against actual skill
+directory names on disk:
+
+```bash
+# 1. Collect actual skill dir names (follow symlinks with -L)
+find -L ~/.hermes/skills -name "SKILL.md" \
+  | while read f; do basename "$(dirname "$f")"; done \
+  | sort > /tmp/skill_dirs.txt
+
+# 2. Cross-reference with disabled list
+python3 -c "
+import yaml
+with open('$HOME/.hermes/config.yaml') as f:
+    cfg = yaml.safe_load(f)
+disabled = set(cfg['skills']['platform_disabled']['cli'])
+with open('/tmp/skill_dirs.txt') as f:
+    dirs = set(line.strip() for line in f if line.strip())
+
+matched = disabled & dirs
+print(f'Disabled names matching installed skills: {len(matched)}')
+print(f'STALE entries (not installed): {len(disabled - matched)}')
+for d in sorted(disabled - matched):
+    print(f'  stale: {d}')
+print(f'Active skills (not in disabled list): {len(dirs - disabled)}')
+for d in sorted(dirs - disabled):
+    print(f'  active: {d}')
+"
+```
+
+Common naming-mismatch patterns observed:
+- `audiocraft-audio-generation` → renamed to `audiocraft`
+- `evaluating-llms-harness` → renamed to `lm-evaluation-harness`
+- `segment-anything-model` → renamed to `segment-anything`
+- `serving-llms-vllm` → renamed to `vllm`
+
+**After cleanup:** update `config.yaml` to remove stale names and add the
+renamed variants to the disabled list if appropriate.
+
+A real-world audit result is captured in
+`references/2026-06-30-stale-entries-audit.md` — 7 stale entries out of
+145 disabled, 31 active skills remaining.
+
 ## Reduction Strategies (highest impact first)
 
 ### 1. Disable unnecessary skills on the target platform
@@ -174,21 +223,27 @@ hermes config set memory.memory_enabled false
    Verify the exact skill name with `head -5 <skill-dir>/SKILL.md` or by
    matching what `hermes skills list` shows in the Name column.
 
-3. **Skills index intro text is mandatory.** The "Skills (mandatory)" intro
+4. **Skills index intro text is mandatory.** The "Skills (mandatory)" intro
    paragraph (~800 chars) cannot be removed without modifying core code; it's
    part of the constant `prompt_builder.py::build_skills_system_prompt()`.
 
-4. **Config changes need /reset or new session.** `agent.*` and `skills.*`
+5. **Config changes need /reset or new session.** `agent.*` and `skills.*`
    settings are read at session start / prompt-build time. Changes inside a
    running session are not picked up until `/reset` or a fresh `hermes` client.
 
-5. **Bundled/hub skills cannot be deleted or edited.** Only local (agent-created)
+6. **Bundled/hub skills cannot be deleted or edited.** Only local (agent-created)
    skills can be modified. Bundled skills are shipped with Hermes; hub skills
    come from the skills catalog.
 
-6. **Naming collision.** If two skills share the same frontmatter `name:`,
+7. **Naming collision.** If two skills share the same frontmatter `name:`,
    `skill_view` will fail with an ambiguity error. Check for duplicates under
    `~/.hermes/skills/` when that happens.
+
+8. **Skills directory is a symlink.** On some setups `~/.hermes/skills` is a
+   symlink (e.g., to a git-tracked repo). Plain `find` does not follow
+   symlinks by default — use `find -L` to traverse into the real skill
+   directories. Without `-L`, `find ~/.hermes/skills -name "SKILL.md"` returns
+   zero results and all cross-reference checks silently fail.
 
 ## Verification
 

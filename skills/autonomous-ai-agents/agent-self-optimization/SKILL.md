@@ -279,6 +279,8 @@ record_match() → record what user said + which skill matched
         └─ 日志: ~/.hermes/knowledge/self-opt/pipeline_watchdog.log
 ```
 
+> ⚠️ **Cron 调度漂移 (2026-06-30 观测)**: 定时 03:00/04:00/05:00 的 cron 任务实际在 07:03-07:12 执行（偏移 2-4 小时）。不影响功能，但可能使 daily-bugfix（06:00）在 nightly 之前跑完，读到过时数据。暂未定位根因，优先级低。
+
 ## Logging (ALL cron events + skill/knowledge changes) ✅ IMPLEMENTED (2026-06-28)
 
 Every self-opt cron event and every skill/knowledge change MUST produce a log entry. Logging
@@ -314,6 +316,32 @@ Each phase writes a structured JSON log to `logs/<timestamp>.json` via `writer.p
 | Phase 1 | `session_id` + `steps` | `pipeline.py` → `write_log()` | every `hermes self-opt process` |
 | Phase 3 distill | `phase: "distill"` | `distill.py::distill_daily()` | cron or manual distill |
 | Phase 4 router | `phase: "router-build"` | `router.py::build_index()` | cron or manual rebuild |
+
+### Accessing logs without the CLI
+
+`hermes self-opt` CLI subcommands may not be registered if the self-opt plugin isn't loaded.
+Use the Python module directly as fallback:
+
+```python
+import sys
+sys.path.insert(0, '/Users/bytedance/script/hermes-self-opt')
+from hermes_self_opt.eventlog import query, format_output
+data = query(target='all', days=1, limit=50)
+print(format_output(data))       # human-readable
+print(data)                      # dict with keys: events, total, shown
+
+# Filtered queries
+data = query(target='cron', days=7)      # only cron events
+data = query(target='skill', days=1)     # only skill changes
+data = query(target='knowledge', days=7) # only knowledge commits
+data = query(target='memory', days=7)    # only memory changes
+
+# Scroll through all events
+for e in data['events']:
+    print(f"{e['timestamp']} | {e['target']}/{e['action']} | {e.get('name','-')}")
+```
+
+The import path is `/Users/bytedance/script/hermes-self-opt` — the project root containing `hermes_self_opt/` package.
 
 ### Verification
 
