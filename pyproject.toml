@@ -8,3 +8,6 @@ version = "0.1.0"
 description = "Agent Self-Optimization plugin for Hermes — Harvest, Mine, Gate-Lite"
 requires-python = ">=3.10"
 dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["hermes_self_opt*"]

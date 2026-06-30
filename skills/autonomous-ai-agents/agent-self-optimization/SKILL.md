@@ -644,6 +644,7 @@ Generate `id` from Chinese title → kebab-case English:
 - `references/router-accuracy-diagnostic.md` — Router 准确率诊断方法：benchmark 驱动 miss 分类 + 根因分析
 - `references/phase2-testing-workflow.md` — Phase 2 端到端测试工作流（飞书文档 → normal/ → knowledge-build）
 - `references/legacy-memory-migration.md` — 传统 MEMORY.md → Core YAML 一次性迁移流程（2026-06-29 执行）
+- `references/hermes-context-reduction.md` — Session 上下文膨胀诊断与修复：skills/tools/MCP 精简 + 压缩配置
 
 ## Related Skills
 

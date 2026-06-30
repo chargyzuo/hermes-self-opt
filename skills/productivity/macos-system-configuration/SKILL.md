@@ -127,6 +127,77 @@ If SSH drops, reconnect with `tmux attach -t hermes`. No character injection nee
 - `Ctrl+L` — terminal-level clear/redraw
 - `Ctrl+C` — exit and restart Hermes
 
+## macOS DHCP / APIPA Diagnosis
+
+### Symptom: Physical Link Up But IP = 169.254.x.x
+
+When `ifconfig enX` shows `status: active` and `media: autoselect (1000baseT <full-duplex,...>)` but the `inet` address is `169.254.x.x`:
+
+```
+inet 169.254.85.235 netmask 0xffff0000 broadcast 169.254.255.255
+```
+
+This is an APIPA (Automatic Private IP Addressing) address. The physical layer is healthy — cable, switch port, speed/duplex negotiation all passed. The problem is DHCP failure.
+
+### Diagnostic Flow
+
+```bash
+# Verify physical status
+ifconfig en0
+# Look for: status: active, 1000baseT, full-duplex, flags include RUNNING
+
+# Check current IP
+ipconfig getifaddr en0
+
+# Try manual DHCP renew
+sudo ipconfig set en0 DHCP
+
+# Or full reset
+sudo ifconfig en0 down
+sudo route flush
+sleep 2
+sudo ifconfig en0 up
+
+# Check DHCP server
+ipconfig getoption en0 server_identifier
+
+# Capture DHCP traffic
+sudo tcpdump -i en0 -c 10 port 67 or port 68 -n
+```
+
+### Common Causes
+
+| Cause | Check |
+|-------|-------|
+| Switch port disabled / VLAN mismatch | `show interfaces status`, `show vlan` on switch |
+| DHCP relay broken | Relay IP reachable? Relay configured on correct SVI? |
+| DHCP scope exhausted | Check DHCP server pool utilization |
+| Client supplicant not triggering DHCP | After dot1x auth, client needs to renew DHCP |
+| Cable / port flapping | `ifconfig en0` media status should be stable `active` |
+
+### 169.254.x.x Does NOT Mean Hardware Fault
+
+Many users panic when they see `169.254.x.x` — it's macOS's normal behavior when DHCP fails. The interface gets this link-local address automatically so basic local-link communication (ARP, mDNS) still works. The fix is always DHCP-side, not hardware-side.
+
+## Hermes CLI Session Context Optimization
+
+When Hermes CLI session consumes too many tokens on startup (20K+ tokens before any user input), see `references/hermes-session-context-optimization.md` for a complete diagnostic-optimization workflow covering `platform_disabled`, MCP server toggling, guidance trimming, and persona pruning.
+
+Quick check:
+```bash
+hermes prompt-size          # show system prompt + tool schemas breakdown
+hermes config edit           # edit config → skills.platform_disabled.cli
+hermes config set mcp_servers.wechat.enabled false  # disable unneeded MCP
+```
+
+Changes take effect after `/reset`.
+
+## Cow Knowledge Vault (User Knowledge Base)
+
+The user maintains an Obsidian knowledge vault at `~/cow/knowledge/` containing structured network troubleshooting docs, vendor configs, and case studies. See `references/cow-knowledge-vault.md` for a document index.
+
+When asked about Arista, Huawei, or other network topics not covered by installed skills, check this vault first — it is the user's curated source of truth.
+
 ## CLI Input Troubleshooting — Extended Diagnostics
 
 ### Quick Symptoms Checklist
